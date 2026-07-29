@@ -115,6 +115,15 @@ const (
 // flow (SPEC.md chapter 15, S11).
 var ReminderOffsetChoices = [...]int{0, 1, 2, 3, 7, 14, 30}
 
+// Ordered enum values, matching app/constants.py's StrEnum declaration
+// order exactly — several keyboards iterate `for c in Category` etc. and
+// depend on that order for button layout.
+var (
+	CategoryValues  = []string{CategoryFamily, CategoryFriends, CategoryWork, CategoryClients, CategorySchool, CategoryOther}
+	EventTypeValues = []string{EventTypeBirthday, EventTypeAnniversary, EventTypeWedding, EventTypeMemorial, EventTypeCustom}
+	GenderValues    = []string{GenderMale, GenderFemale, GenderOther}
+)
+
 // HebrewMonthNames is indexed by (h_month - 1); h_month uses the SPEC.md
 // numbering (1=Nisan .. 12=Adar/Adar I, 13=Adar II).
 var HebrewMonthNames = [13]string{

@@ -25,6 +25,7 @@ func NewDispatcher(db *sql.DB, store *fsm.Store, cfg *config.Config, logger *slo
 	})
 
 	dispatcher.AddHandlerToGroup(loggingHandler(logger), GroupLogging)
+	dispatcher.AddHandlerToGroup(configHandler(cfg), GroupConfig)
 	dispatcher.AddHandlerToGroup(dbHandler(db), GroupDB)
 	dispatcher.AddHandlerToGroup(fsmHandler(store), GroupFSM)
 	dispatcher.AddHandlerToGroup(userHandler(db, cfg), GroupUser)

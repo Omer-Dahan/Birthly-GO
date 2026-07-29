@@ -23,7 +23,8 @@ import (
 // _register_middlewares. Lower runs first. Feature handlers (start, menu,
 // event flows, ...) register in group 0 and above.
 const (
-	GroupLogging  = -7
+	GroupLogging  = -8
+	GroupConfig   = -7
 	GroupDB       = -6
 	GroupFSM      = -5
 	GroupUser     = -4
@@ -33,9 +34,10 @@ const (
 
 // Context data keys set by the middleware chain, read by feature handlers.
 const (
-	DataKeyDB   = "db"
-	DataKeyFSM  = "fsm"
-	DataKeyUser = "user"
+	DataKeyDB     = "db"
+	DataKeyFSM    = "fsm"
+	DataKeyUser   = "user"
+	DataKeyConfig = "config"
 )
 
 // simpleHandler adapts a plain check+handle function pair to ext.Handler,
@@ -114,6 +116,27 @@ func fsmHandler(store *fsm.Store) ext.Handler {
 func FSMFromContext(ctx *ext.Context) *fsm.Store {
 	s, _ := ctx.Data[DataKeyFSM].(*fsm.Store)
 	return s
+}
+
+// configHandler injects the shared *config.Config into ctx.Data. Python
+// handlers reach the same values via the `settings` module-level singleton
+// (app.config.settings imported directly); Go has no such global by
+// convention, so this is the equivalent mechanism to db/fsm above.
+func configHandler(cfg *config.Config) ext.Handler {
+	return simpleHandler{
+		name:  "mw_config",
+		check: always,
+		run: func(b *gotgbot.Bot, ctx *ext.Context) error {
+			ctx.Data[DataKeyConfig] = cfg
+			return nil
+		},
+	}
+}
+
+// ConfigFromContext fetches the shared config attached by configHandler.
+func ConfigFromContext(ctx *ext.Context) *config.Config {
+	c, _ := ctx.Data[DataKeyConfig].(*config.Config)
+	return c
 }
 
 // userHandler loads (or creates) the DB user for this update and

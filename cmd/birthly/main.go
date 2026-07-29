@@ -87,4 +87,5 @@ func run() error {
 func registerHandlers(dispatcher *ext.Dispatcher) {
 	bothandlers.RegisterStart(dispatcher)
 	bothandlers.RegisterMenu(dispatcher)
+	bothandlers.RegisterEventAdd(dispatcher)
 }
