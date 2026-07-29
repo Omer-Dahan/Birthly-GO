@@ -119,9 +119,12 @@ var ReminderOffsetChoices = [...]int{0, 1, 2, 3, 7, 14, 30}
 // order exactly — several keyboards iterate `for c in Category` etc. and
 // depend on that order for button layout.
 var (
-	CategoryValues  = []string{CategoryFamily, CategoryFriends, CategoryWork, CategoryClients, CategorySchool, CategoryOther}
-	EventTypeValues = []string{EventTypeBirthday, EventTypeAnniversary, EventTypeWedding, EventTypeMemorial, EventTypeCustom}
-	GenderValues    = []string{GenderMale, GenderFemale, GenderOther}
+	CategoryValues   = []string{CategoryFamily, CategoryFriends, CategoryWork, CategoryClients, CategorySchool, CategoryOther}
+	EventTypeValues  = []string{EventTypeBirthday, EventTypeAnniversary, EventTypeWedding, EventTypeMemorial, EventTypeCustom}
+	GenderValues     = []string{GenderMale, GenderFemale, GenderOther}
+	LanguageValues   = []string{LanguageHe, LanguageEn}
+	DateFormatValues = []string{DateFormatDMYSlash, DateFormatDMYDot, DateFormatISO}
+	TimeFormatValues = []string{TimeFormat24h, TimeFormat12h}
 )
 
 // HebrewMonthNames is indexed by (h_month - 1); h_month uses the SPEC.md

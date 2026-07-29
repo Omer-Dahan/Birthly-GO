@@ -92,4 +92,5 @@ func registerHandlers(dispatcher *ext.Dispatcher) {
 	bothandlers.RegisterEventList(dispatcher)
 	bothandlers.RegisterEventEdit(dispatcher)
 	bothandlers.RegisterReminders(dispatcher)
+	bothandlers.RegisterSettings(dispatcher)
 }
