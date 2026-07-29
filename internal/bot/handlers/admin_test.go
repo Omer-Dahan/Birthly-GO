@@ -8,11 +8,82 @@ import (
 	"testing"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
+	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 
 	"birthly/internal/bot/callbacks"
+	"birthly/internal/bot/router"
 	"birthly/internal/services"
 	"birthly/internal/store"
+	"birthly/internal/store/models"
 )
+
+func ctxWithUser(user *models.User) *ext.Context {
+	return &ext.Context{Update: &gotgbot.Update{}, Data: map[string]any{router.DataKeyUser: user}}
+}
+
+func TestRequireAdminMsg_RejectsNonAdmin(t *testing.T) {
+	called := false
+	wrapped := requireAdminMsg(func(b *gotgbot.Bot, ctx *ext.Context) error {
+		called = true
+		return nil
+	})
+
+	err := wrapped(nil, ctxWithUser(&models.User{ID: 1, IsAdmin: false}))
+	if err != ext.ContinueGroups {
+		t.Errorf("requireAdminMsg for non-admin = %v, want ext.ContinueGroups", err)
+	}
+	if called {
+		t.Error("requireAdminMsg should not invoke the wrapped handler for a non-admin")
+	}
+}
+
+func TestRequireAdminMsg_PassesAdmin(t *testing.T) {
+	called := false
+	wrapped := requireAdminMsg(func(b *gotgbot.Bot, ctx *ext.Context) error {
+		called = true
+		return nil
+	})
+
+	err := wrapped(nil, ctxWithUser(&models.User{ID: 1, IsAdmin: true}))
+	if err != nil {
+		t.Errorf("requireAdminMsg for admin returned %v, want nil", err)
+	}
+	if !called {
+		t.Error("requireAdminMsg should invoke the wrapped handler for an admin")
+	}
+}
+
+func TestRequireAdminCB_RejectsNonAdmin(t *testing.T) {
+	called := false
+	wrapped := requireAdminCB(func(b *gotgbot.Bot, ctx *ext.Context) error {
+		called = true
+		return nil
+	})
+
+	err := wrapped(nil, ctxWithUser(&models.User{ID: 1, IsAdmin: false}))
+	if err != ext.ContinueGroups {
+		t.Errorf("requireAdminCB for non-admin = %v, want ext.ContinueGroups", err)
+	}
+	if called {
+		t.Error("requireAdminCB should not invoke the wrapped handler for a non-admin")
+	}
+}
+
+func TestRequireAdminCB_PassesAdmin(t *testing.T) {
+	called := false
+	wrapped := requireAdminCB(func(b *gotgbot.Bot, ctx *ext.Context) error {
+		called = true
+		return nil
+	})
+
+	err := wrapped(nil, ctxWithUser(&models.User{ID: 1, IsAdmin: true}))
+	if err != nil {
+		t.Errorf("requireAdminCB for admin returned %v, want nil", err)
+	}
+	if !called {
+		t.Error("requireAdminCB should invoke the wrapped handler for an admin")
+	}
+}
 
 func TestAdminActionFilter(t *testing.T) {
 	filter := adminActionFilter("stats")

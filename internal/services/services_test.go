@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"birthly/internal/core"
@@ -143,6 +144,35 @@ func TestDeleteRestoreToggleMute(t *testing.T) {
 	if toggled.IsActive {
 		t.Error("expected IsActive=false after first toggle")
 	}
+
+	toggledBack, err := ToggleMute(ctx, db, user, event.ID)
+	if err != nil {
+		t.Fatalf("ToggleMute (second): %v", err)
+	}
+	if !toggledBack.IsActive {
+		t.Error("expected IsActive=true after second toggle (flips back)")
+	}
+}
+
+func TestUpdateEvent_NonDateFieldLeavesOccurrenceUnchanged(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	user := mustUser(t, ctx, db, 4005)
+	event, err := CreateMinimalEvent(ctx, db, user, NewEventInput{FirstName: "B", Month: 6, Day: 10}, 1000)
+	if err != nil {
+		t.Fatalf("CreateMinimalEvent: %v", err)
+	}
+	before := *event.NextOccurrence
+
+	notes := "some notes"
+	event.Notes = &notes
+	updated, err := UpdateEvent(ctx, db, user, event)
+	if err != nil {
+		t.Fatalf("UpdateEvent: %v", err)
+	}
+	if !updated.NextOccurrence.Equal(before) {
+		t.Errorf("NextOccurrence changed after a non-date field update: before=%v after=%v", before, updated.NextOccurrence)
+	}
 }
 
 func TestRenderTemplate_AgeSentenceRemovalWhenYearUnknown(t *testing.T) {
@@ -171,6 +201,144 @@ func TestRenderTemplate_NicknameFallback(t *testing.T) {
 	got := RenderTemplate(tpl, event, user)
 	if got != "Dana שלי!" {
 		t.Errorf("RenderTemplate nickname fallback = %q, want %q", got, "Dana שלי!")
+	}
+}
+
+func TestRenderTemplate_MissingRelationLeavesEmpty(t *testing.T) {
+	user := &models.User{Language: core.LanguageHe, Timezone: "Asia/Jerusalem"}
+	event := &models.Event{FirstName: "Dana", CalendarType: core.CalendarTypeGregorian, Month: 1, Day: 1}
+	tpl := &models.GreetingTemplate{Body: "ל{relation} היקרה"}
+
+	got := RenderTemplate(tpl, event, user)
+	if strings.Contains(got, "{relation}") {
+		t.Errorf("RenderTemplate with nil relation left the literal placeholder: %q", got)
+	}
+	if got != "ל היקרה" {
+		t.Errorf("RenderTemplate with nil relation = %q, want %q (empty substitution)", got, "ל היקרה")
+	}
+}
+
+func wipeSystemTemplates(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(`DELETE FROM greeting_templates`); err != nil {
+		t.Fatalf("wipe greeting_templates: %v", err)
+	}
+}
+
+func TestPickTemplate_NoMatchReturnsNil(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	user := mustUser(t, ctx, db, 7101)
+	wipeSystemTemplates(t, db)
+
+	event, err := CreateMinimalEvent(ctx, db, user, NewEventInput{FirstName: "Dana", Month: 3, Day: 15}, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := PickTemplate(ctx, db, user, event, "warm", nil)
+	if err != nil {
+		t.Fatalf("PickTemplate: %v", err)
+	}
+	if got != nil {
+		t.Errorf("PickTemplate with no matching templates = %+v, want nil", got)
+	}
+}
+
+func TestPickTemplate_AvoidsRepeatWithExactlyTwo(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	user := mustUser(t, ctx, db, 7102)
+	wipeSystemTemplates(t, db)
+
+	event, err := CreateMinimalEvent(ctx, db, user, NewEventInput{FirstName: "Dana", Month: 3, Day: 15}, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tpl1, err := CreateUserTemplate(ctx, db, user, core.EventTypeBirthday, "warm", nil, "Body one")
+	if err != nil {
+		t.Fatalf("CreateUserTemplate 1: %v", err)
+	}
+	tpl2, err := CreateUserTemplate(ctx, db, user, core.EventTypeBirthday, "warm", nil, "Body two")
+	if err != nil {
+		t.Fatalf("CreateUserTemplate 2: %v", err)
+	}
+
+	// With exactly 2 candidates and tpl1 excluded, the result must
+	// deterministically be tpl2 every time (not just "doesn't error").
+	for i := 0; i < 10; i++ {
+		got, err := PickTemplate(ctx, db, user, event, "warm", &tpl1.ID)
+		if err != nil {
+			t.Fatalf("PickTemplate: %v", err)
+		}
+		if got == nil || got.ID != tpl2.ID {
+			t.Fatalf("PickTemplate excluding tpl1 = %+v, want tpl2 (id=%d)", got, tpl2.ID)
+		}
+	}
+}
+
+func TestPickTemplate_FallsBackIfOnlyOne(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	user := mustUser(t, ctx, db, 7103)
+	wipeSystemTemplates(t, db)
+
+	event, err := CreateMinimalEvent(ctx, db, user, NewEventInput{FirstName: "Dana", Month: 3, Day: 15}, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl, err := CreateUserTemplate(ctx, db, user, core.EventTypeBirthday, "warm", nil, "Only body")
+	if err != nil {
+		t.Fatalf("CreateUserTemplate: %v", err)
+	}
+
+	// Only one candidate exists — even excluding its own id, it must still
+	// be returned (the exclude filter falls back rather than yielding
+	// nothing).
+	got, err := PickTemplate(ctx, db, user, event, "warm", &tpl.ID)
+	if err != nil {
+		t.Fatalf("PickTemplate: %v", err)
+	}
+	if got == nil || got.ID != tpl.ID {
+		t.Fatalf("PickTemplate with only one candidate = %+v, want the same template back", got)
+	}
+}
+
+func TestDeleteUserTemplate_NonexistentRaisesNotFoundError(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	user := mustUser(t, ctx, db, 7104)
+
+	err := DeleteUserTemplate(ctx, db, user, 999999)
+	if err == nil {
+		t.Fatal("expected an error deleting a nonexistent template")
+	}
+	if _, ok := err.(*NotFoundErr); !ok {
+		t.Errorf("expected *NotFoundErr, got %T: %v", err, err)
+	}
+}
+
+func TestDeleteUserTemplate_SoftDeletes(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	user := mustUser(t, ctx, db, 7105)
+
+	tpl, err := CreateUserTemplate(ctx, db, user, core.EventTypeBirthday, "warm", nil, "Body")
+	if err != nil {
+		t.Fatalf("CreateUserTemplate: %v", err)
+	}
+
+	if err := DeleteUserTemplate(ctx, db, user, tpl.ID); err != nil {
+		t.Fatalf("DeleteUserTemplate: %v", err)
+	}
+
+	var isActive bool
+	if err := db.QueryRow(`SELECT is_active FROM greeting_templates WHERE id = ?`, tpl.ID).Scan(&isActive); err != nil {
+		t.Fatalf("querying deleted template row: %v", err)
+	}
+	if isActive {
+		t.Error("expected is_active=false after DeleteUserTemplate (soft delete), row was still active")
 	}
 }
 

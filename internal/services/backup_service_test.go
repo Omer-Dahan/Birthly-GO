@@ -3,6 +3,7 @@ package services
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -63,6 +64,30 @@ func TestExportImportJSON_RoundTrip(t *testing.T) {
 	}
 	if events.Total != 1 {
 		t.Errorf("user2 total events = %d, want 1", events.Total)
+	}
+}
+
+func TestExportJSON_OmitsPhotoFileID(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	user := mustUser(t, ctx, db, 7008)
+	if _, err := CreateMinimalEvent(ctx, db, user, NewEventInput{FirstName: "Dana", Month: 3, Day: 15}, 1000); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := ExportJSON(ctx, db, user)
+	if err != nil {
+		t.Fatalf("ExportJSON: %v", err)
+	}
+	if bytes.Contains(data, []byte("photo_file_id")) || bytes.Contains(data, []byte("PhotoFileID")) {
+		t.Errorf("exported JSON should never include a photo_file_id key: %s", data)
+	}
+}
+
+func TestParseImportJSON_MalformedJSONReturnsError(t *testing.T) {
+	_, _, err := ParseImportJSON([]byte("not valid json{{{"))
+	if err == nil {
+		t.Fatal("expected an error parsing malformed JSON, got nil")
 	}
 }
 
@@ -151,6 +176,9 @@ func TestExportCSV_HasBOMAndHebrewHeaders(t *testing.T) {
 	if _, err := CreateMinimalEvent(ctx, db, user, NewEventInput{FirstName: "Dana", Month: 3, Day: 15}, 1000); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := CreateMinimalEvent(ctx, db, user, NewEventInput{FirstName: "Yossi", Month: 4, Day: 1}, 1000); err != nil {
+		t.Fatal(err)
+	}
 
 	data, err := ExportCSV(ctx, db, user)
 	if err != nil {
@@ -164,6 +192,15 @@ func TestExportCSV_HasBOMAndHebrewHeaders(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "Dana") {
 		t.Error("CSV export missing event data")
+	}
+
+	r := csv.NewReader(bytes.NewReader(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))))
+	rows, err := r.ReadAll()
+	if err != nil {
+		t.Fatalf("re-parsing exported CSV: %v", err)
+	}
+	if len(rows) != 3 { // 1 header + 2 data rows
+		t.Errorf("CSV row count = %d, want 3 (1 header + 2 events)", len(rows))
 	}
 }
 
