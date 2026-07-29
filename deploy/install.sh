@@ -17,7 +17,7 @@ sudo chmod 700 "$APP_DIR/data"
 # files are compiled in via go:embed).
 if [ ! -f "$APP_DIR/birthly" ]; then
   echo "⚠️  Copy the built 'birthly' binary to $APP_DIR/birthly, then run this script again."
-  echo "    e.g.: GOOS=linux GOARCH=amd64 go build -o birthly ./cmd/birthly"
+  echo "    e.g.: GOOS=linux GOARCH=amd64 go build -ldflags=\"-s -w\" -o birthly ./cmd/birthly"
   exit 1
 fi
 sudo chown "$APP_USER:$APP_USER" "$APP_DIR/birthly"

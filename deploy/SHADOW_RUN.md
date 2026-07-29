@@ -14,10 +14,18 @@ steps 1–4 are for you to run.
 ## Step 0 — build, already verified
 
 ```
-go build -o bin/birthly ./cmd/birthly   # or GOOS=linux GOARCH=amd64 for the VPS
+go build -o bin/birthly ./cmd/birthly   # local sanity build
 go test ./...                           # full suite green as of this commit
 go vet ./...
+
+# actual VPS build (matches deploy/install.sh and deploy/update.sh):
+GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o birthly ./cmd/birthly
 ```
+
+`-s -w` strips debug symbols — 24.7MB → 17.5MB measured locally (Windows
+amd64; the Linux VPS build will differ slightly but the ratio holds), no
+behavior change. That's on-disk size, not RSS — actual memory footprint is
+what Step 2's RAM monitoring measures.
 
 `deploy/birthly-go.service`, `deploy/logrotate.birthly-go`, `deploy/install.sh`,
 `deploy/update.sh`, and `.env.example` are ready in this repo.
