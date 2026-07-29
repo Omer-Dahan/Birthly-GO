@@ -86,12 +86,21 @@ func run() error {
 
 	updater := ext.NewUpdater(dispatcher, &ext.UpdaterOpts{Logger: logger})
 
+	// GetUpdatesOpts.Timeout (int64 seconds, a Telegram API parameter) tells
+	// Telegram how long to hold a long-poll connection open waiting for new
+	// updates. RequestOpts.Timeout (time.Duration, our own HTTP client-side
+	// budget for that same request) must comfortably exceed it, or every
+	// single poll fails instantly with "context deadline exceeded" — a bare
+	// `10` here means 10 *nanoseconds*, not seconds, since the field type is
+	// time.Duration; this is exactly the bug that made polling never work
+	// during local smoke testing on both a sandboxed and a real machine.
+	const longPollSeconds = 9
 	if err := updater.StartPolling(bot, &ext.PollingOpts{
 		DropPendingUpdates: true,
 		GetUpdatesOpts: &gotgbot.GetUpdatesOpts{
-			Timeout: 9,
+			Timeout: longPollSeconds,
 			RequestOpts: &gotgbot.RequestOpts{
-				Timeout: 10,
+				Timeout: (longPollSeconds + 6) * time.Second,
 			},
 		},
 	}); err != nil {
