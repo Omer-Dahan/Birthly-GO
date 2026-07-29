@@ -24,13 +24,20 @@ type UserStats struct {
 	Nearest          *models.Event
 	NearestDaysUntil *int
 	ByCategory       map[string]int
-	ByType           map[string]int
-	ByMonth          map[int]int
-	Youngest         *EventAge
-	Oldest           *EventAge
-	AvgAge           *float64
-	WithoutYear      int
-	Muted            int
+	// ByCategoryOrder preserves first-appearance order while scanning events
+	// (ascending id, same order the repo query uses) — matching Python's
+	// dict insertion-order iteration in stats.py's `for cat, count in
+	// stats.by_category.items()`. A plain map range in Go would iterate in
+	// randomized order instead.
+	ByCategoryOrder []string
+	ByType          map[string]int
+	ByTypeOrder     []string
+	ByMonth         map[int]int
+	Youngest        *EventAge
+	Oldest          *EventAge
+	AvgAge          *float64
+	WithoutYear     int
+	Muted           int
 }
 
 // GetUserStats loads every non-deleted event once and computes all fields
@@ -79,7 +86,13 @@ func GetUserStats(ctx context.Context, db repo.DBTX, user *models.User) (*UserSt
 			stats.ByMonth[int(occ.Month())]++
 		}
 
+		if _, seen := stats.ByCategory[event.Category]; !seen {
+			stats.ByCategoryOrder = append(stats.ByCategoryOrder, event.Category)
+		}
 		stats.ByCategory[event.Category]++
+		if _, seen := stats.ByType[event.EventType]; !seen {
+			stats.ByTypeOrder = append(stats.ByTypeOrder, event.EventType)
+		}
 		stats.ByType[event.EventType]++
 
 		if event.Year == nil {
