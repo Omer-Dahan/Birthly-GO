@@ -3,7 +3,6 @@ package main
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 	"time"
 
@@ -15,6 +14,7 @@ import (
 	"birthly/internal/bot/router"
 	"birthly/internal/config"
 	"birthly/internal/i18n"
+	"birthly/internal/logging"
 	"birthly/internal/store"
 )
 
@@ -30,12 +30,14 @@ func main() {
 }
 
 func run() error {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(logger)
-
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("loading configuration: %w", err)
+	}
+
+	logger, err := logging.Setup(cfg)
+	if err != nil {
+		return fmt.Errorf("setting up logging: %w", err)
 	}
 
 	if err := i18n.LoadLocales(); err != nil {
@@ -76,14 +78,10 @@ func run() error {
 	return nil
 }
 
-// registerHandlers wires the feature handlers into the dispatcher (group 0+,
-// after the middleware chain router.NewDispatcher already registered).
-//
-// /start + the full onboarding flow, and the home/help menu screens, are
-// wired end-to-end (app/handlers/start.py, app/handlers/menu.py). The other
-// ~100 handler functions from app/handlers/*.py (event add/edit/list/card,
-// reminders, settings, templates, search, stats, backup, admin,
-// errors/fallback) are stage 8 of the migration plan and are not yet ported.
+// registerHandlers wires every feature handler package into the dispatcher
+// (group 0, after the middleware chain router.NewDispatcher already
+// registered in its own lower-numbered groups). RegisterFallback must stay
+// last — see its doc comment.
 func registerHandlers(dispatcher *ext.Dispatcher) {
 	bothandlers.RegisterStart(dispatcher)
 	bothandlers.RegisterMenu(dispatcher)
