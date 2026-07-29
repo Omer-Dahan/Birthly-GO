@@ -34,6 +34,12 @@ func TestUserAndEventLifecycle(t *testing.T) {
 	if user.Language != "he" || user.AdarPolicy != "adar_ii" {
 		t.Errorf("unexpected defaults: %+v", user)
 	}
+	if user.Timezone != "Asia/Jerusalem" {
+		t.Errorf("Timezone default = %q, want Asia/Jerusalem", user.Timezone)
+	}
+	if !user.NotificationsEnabled {
+		t.Errorf("NotificationsEnabled default = false, want true")
+	}
 
 	// second contact: not created, profile refreshed
 	user2, created2, err := users.GetOrCreate(ctx, 1001, &username, "Dana Updated", nil, false)
@@ -130,6 +136,114 @@ func TestReminderRuleUnusedOffsetConstraint(t *testing.T) {
 	)
 	if err == nil {
 		t.Errorf("expected CHECK constraint violation for both offsets set, got no error")
+	}
+
+	// exactly_one_offset CHECK: neither offset set must also fail — the
+	// constraint is a strict XOR, not just "at most one".
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO reminder_rules (user_id, offset_days, offset_minutes) VALUES (?, NULL, NULL)`,
+		user.ID,
+	)
+	if err == nil {
+		t.Errorf("expected CHECK constraint violation for neither offset set, got no error")
+	}
+}
+
+func TestUserDeleteCascadesEventsAndRules(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	uname := "cascade"
+	users := NewUserRepo(db)
+	user, _, err := users.GetOrCreate(ctx, 5005, &uname, "Cascade", nil, false)
+	if err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+
+	events := NewEventRepo(db, user.ID)
+	event, err := events.Create(ctx, &models.Event{
+		EventType: "birthday", FirstName: "E", Category: "other",
+		CalendarType: "gregorian", Month: 1, Day: 1, IsActive: true,
+	})
+	if err != nil {
+		t.Fatalf("Create event: %v", err)
+	}
+
+	rules := NewReminderRuleRepo(db, user.ID)
+	offsetDays := 1
+	if _, err := rules.Create(ctx, &models.ReminderRule{EventID: &event.ID, OffsetDays: &offsetDays, Enabled: true}); err != nil {
+		t.Fatalf("Create rule: %v", err)
+	}
+
+	if err := users.Delete(ctx, user.ID); err != nil {
+		t.Fatalf("Delete user: %v", err)
+	}
+
+	var eventCount, ruleCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE user_id = ?`, user.ID).Scan(&eventCount); err != nil {
+		t.Fatalf("count events: %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM reminder_rules WHERE user_id = ?`, user.ID).Scan(&ruleCount); err != nil {
+		t.Fatalf("count rules: %v", err)
+	}
+	if eventCount != 0 {
+		t.Errorf("events remaining after user delete = %d, want 0 (ON DELETE CASCADE)", eventCount)
+	}
+	if ruleCount != 0 {
+		t.Errorf("reminder_rules remaining after user delete = %d, want 0 (ON DELETE CASCADE)", ruleCount)
+	}
+}
+
+func TestMinimalEventGetsDocumentedDefaults(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	uname := "minimal"
+	users := NewUserRepo(db)
+	user, _, err := users.GetOrCreate(ctx, 5006, &uname, "Minimal", nil, false)
+	if err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+
+	// Insert with only user_id + first_name + month + day set — every other
+	// column omitted entirely, so the schema's own DEFAULT clauses apply
+	// (unlike EventRepo.Create, which always supplies every column
+	// explicitly and so never exercises these DB-level defaults). Matches
+	// SPEC ch.11.1's "simplicity contract" at the DB-model level, the way
+	// Python's test_db_models.py checks the SQLAlchemy model defaults.
+	res, err := db.ExecContext(ctx,
+		`INSERT INTO events (user_id, first_name, month, day) VALUES (?, ?, ?, ?)`,
+		user.ID, "Dana", 3, 15,
+	)
+	if err != nil {
+		t.Fatalf("insert minimal event: %v", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("LastInsertId: %v", err)
+	}
+
+	events := NewEventRepo(db, user.ID)
+	got, err := events.GetOwned(ctx, id)
+	if err != nil {
+		t.Fatalf("GetOwned: %v", err)
+	}
+	if got.IsActive != true {
+		t.Errorf("IsActive default = %v, want true", got.IsActive)
+	}
+	if got.Year != nil {
+		t.Errorf("Year = %v, want nil", got.Year)
+	}
+	if got.EventType != "birthday" {
+		t.Errorf("EventType = %q, want birthday", got.EventType)
+	}
+	if got.CalendarType != "gregorian" {
+		t.Errorf("CalendarType = %q, want gregorian", got.CalendarType)
+	}
+	if got.Category != "other" {
+		t.Errorf("Category = %q, want other", got.Category)
+	}
+	if got.LastName != nil || got.Nickname != nil || got.Gender != nil || got.Relation != nil ||
+		got.Phone != nil || got.Notes != nil || got.PhotoFileID != nil || got.EventTime != nil {
+		t.Errorf("expected every optional field to be nil on a minimal event, got %+v", got)
 	}
 }
 

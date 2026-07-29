@@ -208,6 +208,82 @@ func TestGetUserStats_BasicAggregation(t *testing.T) {
 	}
 }
 
+func TestGetUserStats_EmptyStats(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	user := mustUser(t, ctx, db, 5006)
+
+	stats, err := GetUserStats(ctx, db, user)
+	if err != nil {
+		t.Fatalf("GetUserStats: %v", err)
+	}
+	if stats.Total != 0 {
+		t.Errorf("Total = %d, want 0", stats.Total)
+	}
+	if stats.Nearest != nil {
+		t.Errorf("Nearest = %+v, want nil", stats.Nearest)
+	}
+	if stats.AvgAge != nil {
+		t.Errorf("AvgAge = %v, want nil", *stats.AvgAge)
+	}
+	if stats.Youngest != nil || stats.Oldest != nil {
+		t.Errorf("Youngest/Oldest should both be nil for an empty event list")
+	}
+}
+
+func TestGetUserStats_MutedCount(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	user := mustUser(t, ctx, db, 5007)
+
+	event, err := CreateMinimalEvent(ctx, db, user, NewEventInput{FirstName: "A", Month: 1, Day: 1}, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateMinimalEvent(ctx, db, user, NewEventInput{FirstName: "B", Month: 2, Day: 2}, 1000); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ToggleMute(ctx, db, user, event.ID); err != nil {
+		t.Fatalf("ToggleMute: %v", err)
+	}
+
+	stats, err := GetUserStats(ctx, db, user)
+	if err != nil {
+		t.Fatalf("GetUserStats: %v", err)
+	}
+	if stats.Muted != 1 {
+		t.Errorf("Muted = %d, want 1", stats.Muted)
+	}
+}
+
+func TestGetUserStats_ByMonthGroupsByOccurrenceMonth(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	user := mustUser(t, ctx, db, 5008)
+
+	if _, err := CreateMinimalEvent(ctx, db, user, NewEventInput{FirstName: "A", Month: 3, Day: 1}, 1000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateMinimalEvent(ctx, db, user, NewEventInput{FirstName: "B", Month: 3, Day: 20}, 1000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateMinimalEvent(ctx, db, user, NewEventInput{FirstName: "C", Month: 7, Day: 1}, 1000); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := GetUserStats(ctx, db, user)
+	if err != nil {
+		t.Fatalf("GetUserStats: %v", err)
+	}
+	if stats.ByMonth[3] != 2 {
+		t.Errorf("ByMonth[3] = %d, want 2", stats.ByMonth[3])
+	}
+	if stats.ByMonth[7] != 1 {
+		t.Errorf("ByMonth[7] = %d, want 1", stats.ByMonth[7])
+	}
+}
+
 func TestSettingsUpdateAndWipe(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
@@ -240,5 +316,28 @@ func TestSettingsUpdateAndWipe(t *testing.T) {
 	}
 	if gone != nil {
 		t.Error("user row should be gone after WipeAccount")
+	}
+}
+
+func TestUpdateSettings_MultipleFieldsPersistTogether(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	user := mustUser(t, ctx, db, 6007)
+
+	user.NotificationsEnabled = false
+	user.SilentNotifications = true
+	if err := UpdateSettings(ctx, db, user); err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+
+	reloaded, err := repo.NewUserRepo(db).Get(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if reloaded.NotificationsEnabled {
+		t.Errorf("NotificationsEnabled = true, want false to have persisted")
+	}
+	if !reloaded.SilentNotifications {
+		t.Errorf("SilentNotifications = false, want true to have persisted")
 	}
 }
