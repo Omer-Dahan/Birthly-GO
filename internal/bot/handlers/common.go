@@ -9,6 +9,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 
 	"birthly/internal/bot/router"
+	"birthly/internal/i18n"
 	"birthly/internal/store/models"
 )
 
@@ -53,6 +54,19 @@ func AnswerCallback(b *gotgbot.Bot, cq *gotgbot.CallbackQuery, text string) {
 		opts.Text = text
 	}
 	_, _ = b.AnswerCallbackQuery(cq.Id, opts)
+}
+
+// AnswerCallbackAlert answers with a blocking alert dialog instead of the
+// default toast notification.
+func AnswerCallbackAlert(b *gotgbot.Bot, cq *gotgbot.CallbackQuery, text string) {
+	_, _ = b.AnswerCallbackQuery(cq.Id, &gotgbot.AnswerCallbackQueryOpts{Text: text, ShowAlert: true})
+}
+
+// NotFoundAlert answers a callback with the standard "not found" alert —
+// the common error path when an owned-entity lookup fails (IDOR-safe: same
+// message whether the id doesn't exist or belongs to someone else).
+func NotFoundAlert(b *gotgbot.Bot, cq *gotgbot.CallbackQuery, lang string) {
+	AnswerCallbackAlert(b, cq, i18n.T("error.not_found", lang, nil))
 }
 
 // User resolves the middleware-attached user for a handler.
