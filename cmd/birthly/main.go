@@ -5,16 +5,22 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
-	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers"
 
+	"birthly/internal/bot/fsm"
+	bothandlers "birthly/internal/bot/handlers"
 	"birthly/internal/bot/router"
 	"birthly/internal/config"
 	"birthly/internal/i18n"
 	"birthly/internal/store"
 )
+
+// fsmMaxIdleSeconds abandons in-progress flows/state after 6h of
+// inactivity — matches app/main.py's _FSM_MAX_IDLE_SECONDS.
+const fsmMaxIdle = 6 * time.Hour
 
 func main() {
 	if err := run(); err != nil {
@@ -47,7 +53,8 @@ func run() error {
 		return fmt.Errorf("creating bot: %w", err)
 	}
 
-	dispatcher := router.NewDispatcher(db, cfg, logger)
+	fsmStore := fsm.NewStore(fsmMaxIdle, 200)
+	dispatcher := router.NewDispatcher(db, fsmStore, cfg, logger)
 	registerHandlers(dispatcher)
 
 	updater := ext.NewUpdater(dispatcher, &ext.UpdaterOpts{Logger: logger})
@@ -72,22 +79,12 @@ func run() error {
 // registerHandlers wires the feature handlers into the dispatcher (group 0+,
 // after the middleware chain router.NewDispatcher already registered).
 //
-// Only a minimal /start acknowledgement is wired so far — this proves the
-// full chain (config -> store -> middleware -> handler -> i18n) works
-// end-to-end. The other ~108 handler functions from app/handlers/*.py
-// (menu, event add/edit/list/card, reminders, settings, templates, search,
-// stats, backup, admin, errors/fallback) are stage 8 of the migration plan
-// and are not yet ported.
+// /start + the full onboarding flow, and the home/help menu screens, are
+// wired end-to-end (app/handlers/start.py, app/handlers/menu.py). The other
+// ~100 handler functions from app/handlers/*.py (event add/edit/list/card,
+// reminders, settings, templates, search, stats, backup, admin,
+// errors/fallback) are stage 8 of the migration plan and are not yet ported.
 func registerHandlers(dispatcher *ext.Dispatcher) {
-	dispatcher.AddHandler(handlers.NewCommand("start", cmdStart))
-}
-
-func cmdStart(b *gotgbot.Bot, ctx *ext.Context) error {
-	user := router.UserFromContext(ctx)
-	lang := "he"
-	if user != nil {
-		lang = user.Language
-	}
-	_, err := ctx.EffectiveMessage.Reply(b, i18n.T("onboarding.welcome", lang, nil), nil)
-	return err
+	bothandlers.RegisterStart(dispatcher)
+	bothandlers.RegisterMenu(dispatcher)
 }

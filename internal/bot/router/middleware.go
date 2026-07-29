@@ -11,6 +11,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 
+	"birthly/internal/bot/fsm"
 	appmw "birthly/internal/bot/middleware"
 	"birthly/internal/config"
 	"birthly/internal/i18n"
@@ -22,8 +23,9 @@ import (
 // _register_middlewares. Lower runs first. Feature handlers (start, menu,
 // event flows, ...) register in group 0 and above.
 const (
-	GroupLogging  = -6
-	GroupDB       = -5
+	GroupLogging  = -7
+	GroupDB       = -6
+	GroupFSM      = -5
 	GroupUser     = -4
 	GroupThrottle = -3
 	GroupDebounce = -1
@@ -32,6 +34,7 @@ const (
 // Context data keys set by the middleware chain, read by feature handlers.
 const (
 	DataKeyDB   = "db"
+	DataKeyFSM  = "fsm"
 	DataKeyUser = "user"
 )
 
@@ -90,6 +93,27 @@ func dbHandler(db *sql.DB) ext.Handler {
 			return nil
 		},
 	}
+}
+
+// fsmHandler injects the shared *fsm.Store into ctx.Data — no Python
+// equivalent middleware exists (aiogram wires FSMContext into every handler
+// call automatically via its Dispatcher), so this is purely the Go
+// mechanism for making the store reachable the same way db/user are.
+func fsmHandler(store *fsm.Store) ext.Handler {
+	return simpleHandler{
+		name:  "mw_fsm",
+		check: always,
+		run: func(b *gotgbot.Bot, ctx *ext.Context) error {
+			ctx.Data[DataKeyFSM] = store
+			return nil
+		},
+	}
+}
+
+// FSMFromContext fetches the shared FSM store attached by fsmHandler.
+func FSMFromContext(ctx *ext.Context) *fsm.Store {
+	s, _ := ctx.Data[DataKeyFSM].(*fsm.Store)
+	return s
 }
 
 // userHandler loads (or creates) the DB user for this update and
