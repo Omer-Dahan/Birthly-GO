@@ -109,6 +109,30 @@ func TestFmtHHMM(t *testing.T) {
 	}
 }
 
+func TestParsePackedRuleTime(t *testing.T) {
+	hour, mm, ruleID, ok := parsePackedRuleTime("18-00:42")
+	if !ok || hour != 18 || mm != "00" || ruleID != 42 {
+		t.Errorf("parsePackedRuleTime(18-00:42) = (%d,%q,%d,%v), want (18,00,42,true)", hour, mm, ruleID, ok)
+	}
+
+	_, _, _, ok = parsePackedRuleTime("no-colon-here")
+	if ok {
+		t.Error("parsePackedRuleTime with no colon should return ok=false")
+	}
+	_, _, _, ok = parsePackedRuleTime("1800:42")
+	if ok {
+		t.Error("parsePackedRuleTime with no dash in the time part should return ok=false")
+	}
+	_, _, _, ok = parsePackedRuleTime("18-aa:42")
+	if ok {
+		t.Error("parsePackedRuleTime with non-digit minutes should return ok=false")
+	}
+	_, _, _, ok = parsePackedRuleTime("18-00:abc")
+	if ok {
+		t.Error("parsePackedRuleTime with non-digit rule id should return ok=false")
+	}
+}
+
 func TestIsAllDigits(t *testing.T) {
 	cases := map[string]bool{"123": true, "": false, "12a": false, "0": true}
 	for in, want := range cases {
