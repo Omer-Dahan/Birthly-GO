@@ -1,0 +1,12 @@
+input,ok,result
+5750,True,5750
+1990,True,5750
+abc,False,
+42,False,
+,False,
+5859,True,5859
+5861,False,
+1899,False,
+2101,False,
+  5750  ,True,5750
+05750,True,5750

@@ -1,0 +1,10 @@
+input,result
+🎂🎉,True
+   ...!!!,True
+Dana,False
+123,False
+דנה,False
+,True
+!!!123,False
+abc!!!,False
+🎂Dana,False

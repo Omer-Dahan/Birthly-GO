@@ -1,0 +1,6 @@
+input,ok,result
+,True,
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,True,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,False,
+  trimmed  ,True,trimmed
+🎂🎂🎂🎂🎂,True,🎂🎂🎂🎂🎂
