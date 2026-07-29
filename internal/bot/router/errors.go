@@ -35,10 +35,32 @@ func newErrorReporter(cfg *config.Config, logger *slog.Logger) *errorReporter {
 const dedupWindow = time.Hour
 
 func (r *errorReporter) handle(b *gotgbot.Bot, ctx *ext.Context, err error) ext.DispatcherAction {
+	r.report(b, ctx, "unhandled_exception", err)
+	return ext.DispatcherActionNoop
+}
+
+// handlePanic is the DispatcherOpts.Panic hook — a Go runtime panic (nil
+// deref, index out of range, ...) during handler execution. gotgbot treats
+// this as an entirely separate mechanism from a handler returning a non-nil
+// error (see handle above), but Python's aiogram has no such split: every
+// exception, of any kind, flows through the one @router.errors() handler
+// that notifies the user and pages admins. Without this, a Go panic would
+// leave the user with silence — no "something broke" message, no callback
+// answer — violating SPEC ch.13's "every callback always answers, nothing
+// crashes silently" rule for exactly the cases panics are.
+func (r *errorReporter) handlePanic(b *gotgbot.Bot, ctx *ext.Context, rec any) {
+	err, ok := rec.(error)
+	if !ok {
+		err = fmt.Errorf("panic: %v", rec)
+	}
+	r.report(b, ctx, "handler_panic", err)
+}
+
+func (r *errorReporter) report(b *gotgbot.Bot, ctx *ext.Context, logEvent string, err error) {
 	errorID := shortErrorID()
 	signature := fmt.Sprintf("%T:%s", err, truncateRunes(err.Error(), 50))
 
-	r.logger.Error("unhandled_exception", "error_id", errorID, "signature", signature, "error", err)
+	r.logger.Error(logEvent, "error_id", errorID, "signature", signature, "error", err)
 
 	var userID int64
 	switch {
@@ -63,7 +85,6 @@ func (r *errorReporter) handle(b *gotgbot.Bot, ctx *ext.Context, err error) ext.
 	}
 
 	r.notifyAdmins(b, errorID, signature, err)
-	return ext.DispatcherActionNoop
 }
 
 func (r *errorReporter) notifyAdmins(b *gotgbot.Bot, errorID, signature string, err error) {

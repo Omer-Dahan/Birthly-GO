@@ -19,6 +19,7 @@ func NewDispatcher(db *sql.DB, store *fsm.Store, cfg *config.Config, logger *slo
 	dispatcher := ext.NewDispatcher(&ext.DispatcherOpts{
 		Logger: logger,
 		Error:  reporter.handle,
+		Panic:  reporter.handlePanic,
 	})
 
 	dispatcher.AddHandlerToGroup(loggingHandler(logger), GroupLogging)

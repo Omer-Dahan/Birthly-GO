@@ -160,3 +160,70 @@ func TestErrorReporter_Handle_AnswersCallbackAndNotifiesUser(t *testing.T) {
 		t.Errorf("got %d sendMessage calls, want 1", got)
 	}
 }
+
+// A Go panic (nil deref, index out of range, ...) is a completely separate
+// gotgbot mechanism from a handler returning an error — DispatcherOpts.Panic
+// vs. DispatcherOpts.Error. Without handlePanic wired up, the dispatcher's
+// default behavior is just logging the stack trace: no user notification, no
+// callback answer, silently violating SPEC ch.13's "every callback always
+// answers" rule for exactly the cases panics are. These tests exercise
+// handlePanic directly the same way router.go's DispatcherOpts.Panic does.
+
+func TestErrorReporter_HandlePanic_NotifiesUserFromMessage(t *testing.T) {
+	client := &fakeBotClient{}
+	bot := testBot(client)
+	cfg := &config.Config{}
+	r := newErrorReporter(cfg, testLogger())
+
+	update := &gotgbot.Update{Message: &gotgbot.Message{Chat: gotgbot.Chat{Id: 888}}}
+	ctx := &ext.Context{Update: update, Data: map[string]any{}}
+
+	r.handlePanic(bot, ctx, "nil pointer dereference")
+
+	calls := client.callsFor("sendMessage")
+	if len(calls) != 1 {
+		t.Fatalf("got %d sendMessage calls, want 1", len(calls))
+	}
+	if chatID := calls[0]["params"].(map[string]any)["chat_id"]; chatID != int64(888) {
+		t.Errorf("notified chat_id = %v, want 888", chatID)
+	}
+}
+
+func TestErrorReporter_HandlePanic_AnswersCallbackAndNotifiesUser(t *testing.T) {
+	client := &fakeBotClient{}
+	bot := testBot(client)
+	cfg := &config.Config{}
+	r := newErrorReporter(cfg, testLogger())
+
+	cq := &gotgbot.CallbackQuery{Id: "cq2", Message: gotgbot.Message{Chat: gotgbot.Chat{Id: 999}}}
+	update := &gotgbot.Update{CallbackQuery: cq}
+	ctx := &ext.Context{Update: update, Data: map[string]any{}}
+
+	r.handlePanic(bot, ctx, errors.New("index out of range"))
+
+	if got := len(client.callsFor("answerCallbackQuery")); got != 1 {
+		t.Errorf("got %d answerCallbackQuery calls, want 1", got)
+	}
+	if got := len(client.callsFor("sendMessage")); got != 1 {
+		t.Errorf("got %d sendMessage calls, want 1", got)
+	}
+}
+
+func TestErrorReporter_HandlePanic_NonErrorValueIsWrapped(t *testing.T) {
+	client := &fakeBotClient{}
+	bot := testBot(client)
+	cfg := &config.Config{ReportErrorsToAdmin: true, AdminIDs: []int64{111}}
+	r := newErrorReporter(cfg, testLogger())
+
+	// Go panics are frequently a plain string or arbitrary value, not an
+	// error — handlePanic must not itself panic (e.g. on a failed type
+	// assertion) when recover() hands it one of those.
+	update := &gotgbot.Update{Message: &gotgbot.Message{Chat: gotgbot.Chat{Id: 123}}}
+	ctx := &ext.Context{Update: update, Data: map[string]any{}}
+
+	r.handlePanic(bot, ctx, 42) // an arbitrary non-error, non-string panic value
+
+	if got := len(client.callsFor("sendMessage")); got == 0 {
+		t.Error("expected handlePanic to still notify the user for a non-error panic value")
+	}
+}
