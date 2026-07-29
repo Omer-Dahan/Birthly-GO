@@ -33,6 +33,49 @@ func mustUser(t *testing.T, ctx context.Context, db *sql.DB, id int64) *models.U
 	return user
 }
 
+func TestSyncAdmins_PromotesPreExistingUser(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+
+	// User contacted the bot before being added to ADMIN_IDS: created with
+	// isAdmin=false, same as userHandler would do for an unrecognized id.
+	user, err := GetOrCreateUser(ctx, db, 9001, nil, "Dana", nil, false)
+	if err != nil {
+		t.Fatalf("GetOrCreateUser: %v", err)
+	}
+	if user.IsAdmin {
+		t.Fatal("precondition failed: user should not start as admin")
+	}
+
+	if err := SyncAdmins(ctx, db, []int64{9001}); err != nil {
+		t.Fatalf("SyncAdmins: %v", err)
+	}
+
+	reloaded, err := repo.NewUserRepo(db).Get(ctx, 9001)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !reloaded.IsAdmin {
+		t.Error("SyncAdmins should have promoted the pre-existing user to admin")
+	}
+}
+
+func TestSyncAdmins_EmptyListIsNoop(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	if err := SyncAdmins(ctx, db, nil); err != nil {
+		t.Errorf("SyncAdmins(nil) should be a no-op, got error: %v", err)
+	}
+}
+
+func TestSyncAdmins_IgnoresUnknownIDs(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	if err := SyncAdmins(ctx, db, []int64{999999}); err != nil {
+		t.Errorf("SyncAdmins with an id matching no user should not error, got: %v", err)
+	}
+}
+
 func TestGetOrCreateUser_CreatesDefaultRulesAtomically(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"birthly/internal/store/models"
 	"birthly/internal/store/repo"
@@ -46,6 +47,31 @@ func GetOrCreateUser(ctx context.Context, db *sql.DB, userID int64, username *st
 		return nil, fmt.Errorf("get_or_create_user: commit: %w", err)
 	}
 	return user, nil
+}
+
+// SyncAdmins promotes every user id in adminIDs to is_admin=1 — port of
+// app/main.py's _sync_admins, run once at process startup. This is
+// deliberately one-directional (promote only, matching Python exactly): a
+// user removed from ADMIN_IDS keeps is_admin=1 until explicitly demoted
+// elsewhere. Per-request traffic already sets is_admin correctly for a
+// brand-new user at creation time (userHandler passes the same computed
+// flag into GetOrCreateUser's INSERT) — this startup sync exists only to
+// catch a user who was already in the DB *before* being added to
+// ADMIN_IDS, since GetOrCreate's existing-user branch never touches
+// is_admin on subsequent contacts.
+func SyncAdmins(ctx context.Context, db repo.DBTX, adminIDs []int64) error {
+	if len(adminIDs) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(adminIDs))
+	args := make([]any, len(adminIDs))
+	for i, id := range adminIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := "UPDATE users SET is_admin = 1 WHERE id IN (" + strings.Join(placeholders, ",") + ")"
+	_, err := db.ExecContext(ctx, query, args...)
+	return err
 }
 
 func SetLanguage(ctx context.Context, db repo.DBTX, user *models.User, language string) error {

@@ -2,8 +2,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -15,6 +18,8 @@ import (
 	"birthly/internal/config"
 	"birthly/internal/i18n"
 	"birthly/internal/logging"
+	"birthly/internal/scheduler"
+	"birthly/internal/services"
 	"birthly/internal/store"
 )
 
@@ -50,6 +55,14 @@ func run() error {
 	}
 	defer db.Close()
 
+	// Promote any pre-existing user whose id is in ADMIN_IDS but who
+	// contacted the bot before being added to it — port of app/main.py's
+	// _sync_admins(). Brand-new users already get is_admin set correctly at
+	// creation time via the per-request userHandler middleware.
+	if err := services.SyncAdmins(context.Background(), db, cfg.AdminIDs); err != nil {
+		return fmt.Errorf("syncing admins: %w", err)
+	}
+
 	bot, err := gotgbot.NewBot(cfg.BotToken, nil)
 	if err != nil {
 		return fmt.Errorf("creating bot: %w", err)
@@ -58,6 +71,18 @@ func run() error {
 	fsmStore := fsm.NewStore(fsmMaxIdle, 200)
 	dispatcher := router.NewDispatcher(db, fsmStore, cfg, logger)
 	registerHandlers(dispatcher)
+
+	sched, err := scheduler.Build(bot, db, cfg, logger)
+	if err != nil {
+		return fmt.Errorf("building scheduler: %w", err)
+	}
+	sched.Start()
+	// Graceful shutdown, matching app/main.py's try/finally: wait for any
+	// in-flight job to finish before the process exits, rather than killing
+	// it mid-write. Only runs if Idle() below returns normally, which the
+	// signal handler goroutine ensures happens on SIGINT/SIGTERM instead of
+	// the process dying immediately with pending work interrupted.
+	defer sched.Stop()
 
 	updater := ext.NewUpdater(dispatcher, &ext.UpdaterOpts{Logger: logger})
 
@@ -73,8 +98,19 @@ func run() error {
 		return fmt.Errorf("starting polling: %w", err)
 	}
 
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		sig := <-sigCh
+		logger.Info("shutdown_signal_received", "signal", sig.String())
+		if err := updater.Stop(); err != nil {
+			logger.Error("updater_stop_failed", "error", err)
+		}
+	}()
+
 	logger.Info("bot_starting", "username", bot.Username)
 	updater.Idle()
+	logger.Info("bot_stopped")
 	return nil
 }
 
