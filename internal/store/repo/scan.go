@@ -44,18 +44,16 @@ func formatDateTime(t time.Time) string {
 	return t.UTC().Format(datetimeLayout)
 }
 
-// formatDatePtr/formatDateTimePtr return a driver-ready value for a nullable
-// date/datetime arg: nil (SQL NULL) if ptr is nil, else the formatted text.
+// formatDatePtr returns a driver-ready value for a nullable date arg: nil
+// (SQL NULL) if ptr is nil, else the formatted text. Only Date columns need
+// this (next_occurrence); every nullable DateTime column (deleted_at,
+// sent_at) is only ever written as either "now" or a literal SQL NULL, never
+// an arbitrary caller-supplied *time.Time, so there's no DateTime
+// equivalent — a formatDateTimePtr was tried and removed as genuinely dead
+// code, not a stand-in for a missing write path.
 func formatDatePtr(t *time.Time) any {
 	if t == nil {
 		return nil
 	}
 	return formatDate(*t)
-}
-
-func formatDateTimePtr(t *time.Time) any {
-	if t == nil {
-		return nil
-	}
-	return formatDateTime(*t)
 }

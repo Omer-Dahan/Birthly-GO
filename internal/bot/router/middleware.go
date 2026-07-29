@@ -208,7 +208,7 @@ func DBFromContext(ctx *ext.Context) *sql.DB {
 }
 
 const (
-	silenceSeconds      = 30 * time.Second
+	silenceDuration     = 30 * time.Second
 	throttleSweepEveryN = 500
 )
 
@@ -261,9 +261,9 @@ func (h *throttleHandler) HandleUpdate(b *gotgbot.Bot, ctx *ext.Context) error {
 	isMessage := ctx.CallbackQuery == nil
 	user := UserFromContext(ctx)
 
-	graceSeconds := time.Duration(h.cfg.NewAccountGraceHours * float64(time.Hour))
+	graceDuration := time.Duration(h.cfg.NewAccountGraceHours * float64(time.Hour))
 	var bucket *appmw.TokenBucket
-	if user != nil && time.Since(user.CreatedAt) < graceSeconds {
+	if user != nil && time.Since(user.CreatedAt) < graceDuration {
 		if isMessage {
 			bucket = h.newAccountMessageBucket
 		} else {
@@ -297,7 +297,7 @@ func (h *throttleHandler) HandleUpdate(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	if !bucket.Allow(userID) {
 		h.mu.Lock()
-		h.silencedUntil[userID] = now.Add(silenceSeconds)
+		h.silencedUntil[userID] = now.Add(silenceDuration)
 		h.mu.Unlock()
 		lang := h.cfg.DefaultLanguage
 		if user != nil {

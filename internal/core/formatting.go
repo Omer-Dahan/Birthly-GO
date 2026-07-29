@@ -6,9 +6,14 @@ import (
 	"time"
 )
 
+// Escape sequences, not raw literal characters: an invisible bidi control
+// character sitting directly in source text is a landmine for editors, git
+// diffs, and copy-paste to silently mangle (the same class of risk as the
+// BOM-literal issue elsewhere in this codebase) — staticcheck flags this
+// (ST1018) for exactly that reason.
 const (
-	rlm = "‏" // RLM
-	lrm = "‎" // LRM
+	rlm = "\u200f" // RLM (right-to-left mark)
+	lrm = "\u200e" // LRM (left-to-right mark)
 )
 
 // FormatDate renders d per the user's chosen dateFormat setting.
