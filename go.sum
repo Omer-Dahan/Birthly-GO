@@ -1,3 +1,5 @@
+github.com/PaulSonOfLars/gotgbot/v2 v2.0.0-rc.35 h1:THWaG6urv7EnopMeQcIdA5gOuDbtmRWDMpTBUIJRxk0=
+github.com/PaulSonOfLars/gotgbot/v2 v2.0.0-rc.35/go.mod h1:yrKnA/812p/Vh84TYQMz36/8SNLF7OOdTmKFr5i7W7g=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=

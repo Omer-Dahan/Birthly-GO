@@ -3,6 +3,7 @@ module birthly
 go 1.26
 
 require (
+	github.com/PaulSonOfLars/gotgbot/v2 v2.0.0-rc.35 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hebcal/greg v1.1.0 // indirect
