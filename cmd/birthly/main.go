@@ -94,4 +94,5 @@ func registerHandlers(dispatcher *ext.Dispatcher) {
 	bothandlers.RegisterReminders(dispatcher)
 	bothandlers.RegisterSettings(dispatcher)
 	bothandlers.RegisterTemplates(dispatcher)
+	bothandlers.RegisterSearch(dispatcher)
 }
