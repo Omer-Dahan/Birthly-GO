@@ -187,3 +187,74 @@ func TestNotificationCreatePendingIdempotent(t *testing.T) {
 		t.Fatalf("MarkSent: %v", err)
 	}
 }
+
+func TestUpcomingBetween(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	uname := "u"
+	users := NewUserRepo(db)
+	user, _, err := users.GetOrCreate(ctx, 4004, &uname, "U", nil, false)
+	if err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+	events := NewEventRepo(db, user.ID)
+
+	mkEvent := func(name string, occ time.Time) *models.Event {
+		e := &models.Event{
+			EventType: "birthday", FirstName: name, Category: "other",
+			CalendarType: "gregorian", Month: int(occ.Month()), Day: occ.Day(),
+			IsActive: true, NextOccurrence: &occ,
+		}
+		created, err := events.Create(ctx, e)
+		if err != nil {
+			t.Fatalf("Create event %s: %v", name, err)
+		}
+		return created
+	}
+
+	// Out of range (before window), on the lower boundary, in the middle,
+	// on the upper boundary, and out of range (after window) — in
+	// deliberately non-sorted insertion order, to prove UpcomingBetween
+	// both filters and sorts by occurrence date.
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC)
+	mkEvent("TooLate", end.AddDate(0, 0, 1))
+	upperBoundary := mkEvent("UpperBoundary", end)
+	mkEvent("TooEarly", start.AddDate(0, 0, -1))
+	middle := mkEvent("Middle", start.AddDate(0, 0, 3))
+	lowerBoundary := mkEvent("LowerBoundary", start)
+
+	got, err := events.UpcomingBetween(ctx, start, end)
+	if err != nil {
+		t.Fatalf("UpcomingBetween: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("UpcomingBetween returned %d events, want 3 (both boundaries inclusive, middle included)", len(got))
+	}
+	wantOrder := []int64{lowerBoundary.ID, middle.ID, upperBoundary.ID}
+	for i, want := range wantOrder {
+		if got[i].ID != want {
+			t.Errorf("UpcomingBetween[%d].ID = %d (%s), want %d", i, got[i].ID, got[i].FirstName, want)
+		}
+	}
+}
+
+func TestUpcomingBetween_EmptyWhenNoneInRange(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	uname := "u2"
+	users := NewUserRepo(db)
+	user, _, err := users.GetOrCreate(ctx, 4005, &uname, "U2", nil, false)
+	if err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+	events := NewEventRepo(db, user.ID)
+
+	got, err := events.UpcomingBetween(ctx, time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("UpcomingBetween: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("UpcomingBetween with no events = %d results, want 0", len(got))
+	}
+}

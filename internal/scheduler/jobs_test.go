@@ -167,6 +167,31 @@ func TestTickReminders_FiresExactlyOnce(t *testing.T) {
 	}
 }
 
+func TestTickReminders_NotificationsDisabledNoSend(t *testing.T) {
+	db := testDB(t)
+	offset := 1
+	sendTime := "09:00"
+	user, _ := seedUserEventRule(t, db, 1, "Asia/Jerusalem", "09:00", &offset, &sendTime, nil)
+
+	user.NotificationsEnabled = false
+	if err := repo.NewUserRepo(db).UpdateSettings(context.Background(), user); err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+
+	client := &fakeBotClient{}
+	bot := testBot(client)
+	cfg := testConfig()
+
+	// Same fire time as TestTickReminders_FiresExactlyOnce, which sends —
+	// the only difference here is notifications_enabled=false.
+	if err := TickReminders(context.Background(), bot, db, cfg, time.Date(2026, 7, 31, 6, 1, 0, 0, time.UTC), testLogger()); err != nil {
+		t.Fatalf("TickReminders: %v", err)
+	}
+	if client.sendCount() != 0 {
+		t.Fatalf("sendCount = %d, want 0 (notifications disabled)", client.sendCount())
+	}
+}
+
 func TestTickReminders_DowntimeWithinGraceSends(t *testing.T) {
 	db := testDB(t)
 	offset := 1
