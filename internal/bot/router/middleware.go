@@ -207,12 +207,22 @@ func DBFromContext(ctx *ext.Context) *sql.DB {
 	return db
 }
 
-const silenceSeconds = 30 * time.Second
+const (
+	silenceSeconds      = 30 * time.Second
+	throttleSweepEveryN = 500
+)
 
 // throttleHandler is per-user rate limiting with separate buckets for
 // messages and callbacks, and a stricter pair for accounts still in their
 // grace period — port of app/middlewares/throttling.py, including its
 // "silence for 30s after first violation" behavior.
+//
+// silencedUntil only self-cleans a given user's entry when that same user
+// sends another update after their silence window expires (see the delete
+// in HandleUpdate below) — a user silenced once and never seen again would
+// otherwise sit in this map forever. callsSweep below adds the same
+// periodic-eviction pattern already used by appmw.TokenBucket/Debouncer, so
+// this map can't grow without bound either.
 type throttleHandler struct {
 	cfg                      *config.Config
 	messageBucket            *appmw.TokenBucket
@@ -222,6 +232,7 @@ type throttleHandler struct {
 
 	mu            sync.Mutex
 	silencedUntil map[int64]time.Time
+	callsSweep    int
 }
 
 func newThrottleHandler(cfg *config.Config) *throttleHandler {
@@ -266,6 +277,15 @@ func (h *throttleHandler) HandleUpdate(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	now := time.Now()
 	h.mu.Lock()
+	h.callsSweep++
+	if h.callsSweep >= throttleSweepEveryN {
+		h.callsSweep = 0
+		for key, until := range h.silencedUntil {
+			if now.After(until) {
+				delete(h.silencedUntil, key)
+			}
+		}
+	}
 	if until, ok := h.silencedUntil[userID]; ok {
 		if now.Before(until) {
 			h.mu.Unlock()
