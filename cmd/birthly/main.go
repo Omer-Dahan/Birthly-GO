@@ -89,4 +89,5 @@ func registerHandlers(dispatcher *ext.Dispatcher) {
 	bothandlers.RegisterMenu(dispatcher)
 	bothandlers.RegisterEventAdd(dispatcher)
 	bothandlers.RegisterEventCard(dispatcher)
+	bothandlers.RegisterEventList(dispatcher)
 }
