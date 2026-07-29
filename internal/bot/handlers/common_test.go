@@ -19,6 +19,9 @@ type fakeEditClient struct {
 }
 
 func (f *fakeEditClient) RequestWithContext(ctx context.Context, token, method string, params map[string]any, opts *gotgbot.RequestOpts) (json.RawMessage, error) {
+	if method == "sendMessage" {
+		return json.Marshal(gotgbot.Message{MessageId: 2, Date: int64(time.Now().Unix())})
+	}
 	if method != "editMessageText" {
 		return json.RawMessage(`true`), nil
 	}

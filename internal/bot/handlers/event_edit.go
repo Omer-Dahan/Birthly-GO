@@ -33,8 +33,11 @@ func RegisterEventEdit(dispatcher *ext.Dispatcher) {
 	dispatcher.AddHandler(handlers.NewCallback(eventFlowActionFilter("gender"), cbFieldSetGender))
 	dispatcher.AddHandler(handlers.NewCallback(eventFlowActionFilter("type"), cbFieldSetEventType))
 	dispatcher.AddHandler(handlers.NewCallback(eventFlowActionFilter("clear"), cbFieldClear))
+	dispatcher.AddHandler(handlers.NewMessage(hasPhoto, msgFieldPhoto))
 	dispatcher.AddHandler(handlers.NewMessage(anyText, msgFieldValue))
 }
+
+func hasPhoto(msg *gotgbot.Message) bool { return len(msg.Photo) > 0 }
 
 var timeRE = regexp.MustCompile(`^([01]?\d|2[0-3]):([0-5]\d)$`)
 
@@ -426,6 +429,58 @@ func msgFieldValue(b *gotgbot.Bot, ctx *ext.Context) error {
 		return err
 	}
 	setEventField(event, field, &value)
+	updated, err := services.UpdateEvent(context.Background(), db, user, event)
+	if err != nil {
+		if isNotFound(err) {
+			_, sendErr := ctx.EffectiveMessage.Reply(b, i18n.T("error.not_found", user.Language, nil), nil)
+			return sendErr
+		}
+		return err
+	}
+
+	store.SetState(user.ID, fsm.EditEventChoosingField)
+	name := core.Esc(core.FormatName(updated.FirstName, updated.LastName))
+	text := i18n.T("edit.field_saved", user.Language, nil) + "\n\n" + i18n.T("more.title", user.Language, map[string]any{"name": name})
+	_, sendErr := ctx.EffectiveMessage.Reply(b, text, &gotgbot.SendMessageOpts{
+		ReplyMarkup: keyboards.MoreDetailsKeyboard(user.Language, eventFieldValues(updated)), ParseMode: "HTML",
+	})
+	return sendErr
+}
+
+// msgFieldPhoto handles the one field msgFieldValue deliberately punts on
+// (see its "field == photo" early return) — port of app/handlers/
+// event_edit.py's msg_field_photo. A photo-only Telegram message carries no
+// Text (only Photo/Caption), so it would never have matched msgFieldValue's
+// anyText filter anyway; this was previously entirely unregistered, so a
+// user replying to "שלח תמונה:" with an actual photo fell through every
+// handler to the global fallback ("לא הבנתי").
+func msgFieldPhoto(b *gotgbot.Bot, ctx *ext.Context) error {
+	user := User(ctx)
+	db := router.DBFromContext(ctx)
+	store := router.FSMFromContext(ctx)
+	if state, ok := store.GetState(user.ID); !ok || state != fsm.EditEventEnteringValue {
+		return ext.ContinueGroups
+	}
+
+	data := store.GetData(user.ID)
+	field, _ := data["editing_field"].(string)
+	eventID, hasEventID := fsmEventID(store, user.ID)
+	if field != "photo" || !hasEventID {
+		return ext.ContinueGroups
+	}
+
+	photos := ctx.EffectiveMessage.Photo
+	fileID := photos[len(photos)-1].FileId // largest available resolution
+
+	event, err := services.GetOwnedEvent(context.Background(), db, user, eventID)
+	if err != nil {
+		if isNotFound(err) {
+			_, sendErr := ctx.EffectiveMessage.Reply(b, i18n.T("error.not_found", user.Language, nil), nil)
+			return sendErr
+		}
+		return err
+	}
+	setEventField(event, "photo", &fileID)
 	updated, err := services.UpdateEvent(context.Background(), db, user, event)
 	if err != nil {
 		if isNotFound(err) {
