@@ -13,10 +13,10 @@ import (
 // NotificationRepo is NOT scoped to a single user_id: the scheduler tick
 // processes all users in one pass.
 type NotificationRepo struct {
-	db *sql.DB
+	db DBTX
 }
 
-func NewNotificationRepo(db *sql.DB) *NotificationRepo {
+func NewNotificationRepo(db DBTX) *NotificationRepo {
 	return &NotificationRepo{db: db}
 }
 

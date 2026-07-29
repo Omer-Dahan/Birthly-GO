@@ -3,7 +3,6 @@ package repo
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"strings"
 
@@ -12,11 +11,11 @@ import (
 
 // AuditRepo is scoped to a single user_id (the actor).
 type AuditRepo struct {
-	db     *sql.DB
+	db     DBTX
 	userID int64
 }
 
-func NewAuditRepo(db *sql.DB, userID int64) *AuditRepo {
+func NewAuditRepo(db DBTX, userID int64) *AuditRepo {
 	return &AuditRepo{db: db, userID: userID}
 }
 

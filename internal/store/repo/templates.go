@@ -10,11 +10,11 @@ import (
 // TemplateRepo is scoped to a single user_id for personal-template
 // operations; system templates (user_id IS NULL) are readable by everyone.
 type TemplateRepo struct {
-	db     *sql.DB
+	db     DBTX
 	userID int64
 }
 
-func NewTemplateRepo(db *sql.DB, userID int64) *TemplateRepo {
+func NewTemplateRepo(db DBTX, userID int64) *TemplateRepo {
 	return &TemplateRepo{db: db, userID: userID}
 }
 

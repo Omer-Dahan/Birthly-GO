@@ -9,11 +9,11 @@ import (
 
 // ReminderRuleRepo is scoped to a single user_id.
 type ReminderRuleRepo struct {
-	db     *sql.DB
+	db     DBTX
 	userID int64
 }
 
-func NewReminderRuleRepo(db *sql.DB, userID int64) *ReminderRuleRepo {
+func NewReminderRuleRepo(db DBTX, userID int64) *ReminderRuleRepo {
 	return &ReminderRuleRepo{db: db, userID: userID}
 }
 

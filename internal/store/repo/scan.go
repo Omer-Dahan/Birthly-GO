@@ -1,7 +1,22 @@
 // Package repo contains the data-access repositories, each scoped to a user ID.
 package repo
 
-import "time"
+import (
+	"context"
+	"database/sql"
+	"time"
+)
+
+// DBTX is satisfied by both *sql.DB and *sql.Tx, so every repository can run
+// either directly against the database or inside a caller-managed
+// transaction (needed where Python relied on a single session.commit() to
+// make a multi-statement sequence atomic — e.g. user_service.get_or_create_user
+// creating a user row plus two default reminder rules in one commit).
+type DBTX interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
 
 // dateLayout/datetimeLayout match exactly what SQLAlchemy writes for its
 // Date and DateTime column types (see app/db/session.py and SPEC.md's known

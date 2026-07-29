@@ -13,11 +13,11 @@ import (
 // There is deliberately no method that fetches a row by id alone; see
 // SPEC.md chapter 27 (IDOR protection) and app/db/repositories/base.py.
 type EventRepo struct {
-	db     *sql.DB
+	db     DBTX
 	userID int64
 }
 
-func NewEventRepo(db *sql.DB, userID int64) *EventRepo {
+func NewEventRepo(db DBTX, userID int64) *EventRepo {
 	return &EventRepo{db: db, userID: userID}
 }
 
