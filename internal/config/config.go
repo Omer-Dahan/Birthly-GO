@@ -17,19 +17,19 @@ import (
 // Config mirrors app.config.Settings field-for-field.
 type Config struct {
 	// Telegram
-	BotToken     string
-	BotUsername  string
-	AdminIDs     []int64
+	BotToken    string
+	BotUsername string
+	AdminIDs    []int64
 
 	// Database
 	DBPath string
 
 	// Defaults
-	DefaultLanguage    string
-	DefaultTimezone    string
-	DefaultNotifyTime  string
-	DefaultDateFormat  string
-	DefaultTimeFormat  string
+	DefaultLanguage   string
+	DefaultTimezone   string
+	DefaultNotifyTime string
+	DefaultDateFormat string
+	DefaultTimeFormat string
 
 	// Scheduler
 	SchedulerTickSeconds int
@@ -37,16 +37,16 @@ type Config struct {
 	MaxUpcomingDays      int
 
 	// Limits
-	MaxEventsPerUser     int
-	RateLimitMessages    int
-	RateLimitCallbacks   int
-	BroadcastRatePerSec  int
-	PageSize             int
+	MaxEventsPerUser    int
+	RateLimitMessages   int
+	RateLimitCallbacks  int
+	BroadcastRatePerSec int
+	PageSize            int
 
 	// Anti-spam: stricter limits for accounts still within their grace period
-	NewAccountGraceHours          float64
-	NewAccountRateLimitMessages   int
-	NewAccountRateLimitCallbacks  int
+	NewAccountGraceHours         float64
+	NewAccountRateLimitMessages  int
+	NewAccountRateLimitCallbacks int
 
 	// Anti-spam: minimum gap between two button taps from the same user
 	CallbackDebounceMS int
