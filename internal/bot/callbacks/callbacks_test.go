@@ -78,6 +78,35 @@ func TestTemplateRoundTrip(t *testing.T) {
 	}
 }
 
+// TestTemplateRoundTrip_WithExcludeID guards a specific regression: the
+// Python original broke when packing a "pick another" callback because
+// exclude_id collided with the callback-data field separator. Every field
+// (Action, Value, EventID, ExcludeID) must survive encode->decode intact
+// when ExcludeID is set alongside the others, not just when it's absent.
+func TestTemplateRoundTrip_WithExcludeID(t *testing.T) {
+	eventID := int64(3)
+	excludeID := int64(17)
+	value := "warm"
+	data := Template{Action: "pick", Value: &value, EventID: &eventID, ExcludeID: &excludeID}.Encode()
+
+	decoded, err := DecodeTemplate(data)
+	if err != nil {
+		t.Fatalf("DecodeTemplate(%q): %v", data, err)
+	}
+	if decoded.Action != "pick" {
+		t.Errorf("Action = %q, want pick", decoded.Action)
+	}
+	if decoded.Value == nil || *decoded.Value != "warm" {
+		t.Errorf("Value = %v, want warm", decoded.Value)
+	}
+	if decoded.EventID == nil || *decoded.EventID != 3 {
+		t.Errorf("EventID = %v, want 3", decoded.EventID)
+	}
+	if decoded.ExcludeID == nil || *decoded.ExcludeID != 17 {
+		t.Errorf("ExcludeID = %v, want 17", decoded.ExcludeID)
+	}
+}
+
 func TestPrefixRouting(t *testing.T) {
 	cases := map[string]string{
 		Menu{Action: "home"}.Encode():          PrefixMenu,

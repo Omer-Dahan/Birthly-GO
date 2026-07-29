@@ -175,6 +175,41 @@ func TestUpdateEvent_NonDateFieldLeavesOccurrenceUnchanged(t *testing.T) {
 	}
 }
 
+func TestBuildAIPrompt_IncludesOptionalDetails(t *testing.T) {
+	user := &models.User{Language: core.LanguageHe, Timezone: "Asia/Jerusalem"}
+	relation := "אמא"
+	nickname := "דנוש"
+	notes := "אוהבת פרחים"
+	event := &models.Event{
+		FirstName: "Dana", CalendarType: core.CalendarTypeGregorian, Month: 1, Day: 1,
+		EventType: core.EventTypeBirthday, Relation: &relation, Nickname: &nickname, Notes: &notes,
+	}
+
+	got := BuildAIPrompt(event, user, "warm")
+	if !strings.Contains(got, "Dana") {
+		t.Errorf("BuildAIPrompt missing the event name: %q", got)
+	}
+	if !strings.Contains(got, relation) {
+		t.Errorf("BuildAIPrompt missing the relation: %q", got)
+	}
+	if !strings.Contains(got, nickname) {
+		t.Errorf("BuildAIPrompt missing the nickname: %q", got)
+	}
+	if !strings.Contains(got, notes) {
+		t.Errorf("BuildAIPrompt missing the notes: %q", got)
+	}
+}
+
+func TestBuildAIPrompt_OmitsAbsentOptionalDetails(t *testing.T) {
+	user := &models.User{Language: core.LanguageHe, Timezone: "Asia/Jerusalem"}
+	event := &models.Event{FirstName: "Dana", CalendarType: core.CalendarTypeGregorian, Month: 1, Day: 1, EventType: core.EventTypeBirthday}
+
+	got := BuildAIPrompt(event, user, "warm")
+	if strings.Contains(got, "קשר:") || strings.Contains(got, "כינוי:") || strings.Contains(got, "הערות:") {
+		t.Errorf("BuildAIPrompt should omit detail lines with no data, got %q", got)
+	}
+}
+
 func TestRenderTemplate_AgeSentenceRemovalWhenYearUnknown(t *testing.T) {
 	user := &models.User{Language: core.LanguageHe, Timezone: "Asia/Jerusalem"}
 	event := &models.Event{FirstName: "Dana", CalendarType: core.CalendarTypeGregorian, Month: 1, Day: 1}
