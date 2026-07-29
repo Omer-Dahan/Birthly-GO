@@ -98,4 +98,8 @@ func registerHandlers(dispatcher *ext.Dispatcher) {
 	bothandlers.RegisterStats(dispatcher)
 	bothandlers.RegisterBackup(dispatcher)
 	bothandlers.RegisterAdmin(dispatcher)
+	// RegisterFallback must be last: its handlers match any message/callback,
+	// and gotgbot only runs the first match per group (all of the above
+	// share the default group 0) — see RegisterFallback's doc comment.
+	bothandlers.RegisterFallback(dispatcher)
 }

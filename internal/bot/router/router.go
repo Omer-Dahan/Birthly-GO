@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"log/slog"
 
-	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 
 	"birthly/internal/bot/fsm"
@@ -16,12 +15,10 @@ import (
 // Group* constants). Feature handlers should be added afterward via
 // AddHandlerToGroup(h, 0) or higher.
 func NewDispatcher(db *sql.DB, store *fsm.Store, cfg *config.Config, logger *slog.Logger) *ext.Dispatcher {
+	reporter := newErrorReporter(cfg, logger)
 	dispatcher := ext.NewDispatcher(&ext.DispatcherOpts{
 		Logger: logger,
-		Error: func(b *gotgbot.Bot, ctx *ext.Context, err error) ext.DispatcherAction {
-			logger.Error("handler error", "error", err)
-			return ext.DispatcherActionNoop
-		},
+		Error:  reporter.handle,
 	})
 
 	dispatcher.AddHandlerToGroup(loggingHandler(logger), GroupLogging)
