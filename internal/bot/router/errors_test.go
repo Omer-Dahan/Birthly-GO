@@ -103,6 +103,43 @@ func TestNotifyAdmins_DedupedWithinWindow(t *testing.T) {
 	}
 }
 
+// TestNotifyAdmins_StaleSignaturesAreEvicted is the regression test for the
+// nextReport map leak: a bug whose error message embeds per-request data
+// (an id, a value) produces a distinct signature every time it fires, so
+// without eviction this map would grow forever. Confirms an expired
+// signature actually gets removed (not just skipped) on a later call —
+// checked indirectly by seeding one expired signature, then calling
+// notifyAdmins with a *different* signature and reading the map's exact
+// size back out afterward.
+func TestNotifyAdmins_StaleSignaturesAreEvicted(t *testing.T) {
+	client := &fakeBotClient{}
+	bot := testBot(client)
+	cfg := &config.Config{ReportErrorsToAdmin: true, AdminIDs: []int64{111}}
+	r := newErrorReporter(cfg, testLogger())
+
+	r.mu.Lock()
+	r.nextReport["StaleError:one"] = time.Now().Add(-time.Hour) // already expired
+	r.mu.Unlock()
+
+	r.notifyAdmins(bot, "ZZZZ", "FreshError:two", errors.New("two"))
+
+	r.mu.Lock()
+	_, staleStillPresent := r.nextReport["StaleError:one"]
+	_, freshPresent := r.nextReport["FreshError:two"]
+	size := len(r.nextReport)
+	r.mu.Unlock()
+
+	if staleStillPresent {
+		t.Error("expired signature should have been evicted, but it's still in nextReport")
+	}
+	if !freshPresent {
+		t.Error("the signature just reported should be present in nextReport")
+	}
+	if size != 1 {
+		t.Errorf("nextReport has %d entries, want exactly 1 (the fresh one)", size)
+	}
+}
+
 func TestNotifyAdmins_DisabledOrNoAdmins(t *testing.T) {
 	client := &fakeBotClient{}
 	bot := testBot(client)

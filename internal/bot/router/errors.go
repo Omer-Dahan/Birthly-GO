@@ -94,6 +94,18 @@ func (r *errorReporter) notifyAdmins(b *gotgbot.Bot, errorID, signature string, 
 
 	now := time.Now()
 	r.mu.Lock()
+	// Sweep expired signatures on every call rather than a periodic
+	// counter (unlike the per-update throttleHandler.silencedUntil sweep):
+	// this path only runs on an actual unhandled error, which is rare by
+	// design, so an O(map size) walk here is negligible — and it's the
+	// only thing keeping this map from growing forever, since a bug whose
+	// error message embeds per-request data (an id, a value) produces a
+	// distinct signature every single time it fires.
+	for sig, until := range r.nextReport {
+		if now.After(until) {
+			delete(r.nextReport, sig)
+		}
+	}
 	next, seen := r.nextReport[signature]
 	if seen && now.Before(next) {
 		r.mu.Unlock()
