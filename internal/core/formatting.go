@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -15,6 +16,23 @@ const (
 	rlm = "\u200f" // RLM (right-to-left mark)
 	lrm = "\u200e" // LRM (left-to-right mark)
 )
+
+// ShareURL builds a t.me/share/url deep link that opens Telegram's native
+// "forward to..." chat picker with text pre-filled. Unlike a
+// SwitchInlineQueryChosenChat button, this doesn't require the bot to
+// support inline mode and doesn't prefix the target chat's compose box with
+// "@BotUsername " — without an inline_query handler, that prefix is never
+// resolved into a clean result, so hitting send posts the raw "@BotUsername
+// <text>" literally, stepping on whatever was being shared.
+func ShareURL(text string) string {
+	return "https://t.me/share/url?text=" + url.QueryEscape(text)
+}
+
+// ShareURLWithLink is ShareURL plus a url= param, e.g. an invite link back
+// to the bot alongside the promo text explaining it.
+func ShareURLWithLink(link, text string) string {
+	return "https://t.me/share/url?url=" + url.QueryEscape(link) + "&text=" + url.QueryEscape(text)
+}
 
 // FormatDate renders d per the user's chosen dateFormat setting.
 func FormatDate(d time.Time, dateFormat string) string {

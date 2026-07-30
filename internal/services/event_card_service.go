@@ -69,7 +69,8 @@ func RenderCardText(user *models.User, event *models.Event, rules []*models.Remi
 
 	today := UserToday(user)
 	next := *event.NextOccurrence
-	if event.CalendarType == core.CalendarTypeHebrew {
+	switch {
+	case event.CalendarType == core.CalendarTypeHebrew:
 		hebYear := 0
 		if event.Year != nil {
 			hebYear = *event.Year
@@ -78,7 +79,14 @@ func RenderCardText(user *models.User, event *models.Event, rules []*models.Remi
 		}
 		hebStr := core.FormatHebrewDate(hebYear, event.Month, event.Day, event.Year != nil)
 		lines = append(lines, "📅 "+core.FormatDate(next, user.DateFormat)+"  ·  "+hebStr)
-	} else {
+	case user.ShowHebrewDate:
+		// Gregorian-calendar event, but the user opted into seeing the
+		// Hebrew equivalent too — convert the upcoming occurrence itself
+		// (not the birth date) since that's the date actually being shown.
+		hebYear, hebMonth, hebDay := core.ToHebrew(next)
+		hebStr := core.FormatHebrewDate(hebYear, hebMonth, hebDay, true)
+		lines = append(lines, "📅 "+core.FormatDate(next, user.DateFormat)+"  ·  "+hebStr)
+	default:
 		lines = append(lines, "📅 "+core.FormatDate(next, user.DateFormat))
 	}
 

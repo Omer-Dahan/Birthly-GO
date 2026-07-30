@@ -6,6 +6,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 
 	"birthly/internal/bot/callbacks"
+	"birthly/internal/core"
 	"birthly/internal/i18n"
 )
 
@@ -36,18 +37,29 @@ func GreetingStyleKeyboard(lang string, eventID int64) *gotgbot.InlineKeyboardMa
 	}
 }
 
-// GreetingResultKeyboard is the S14 result screen: another / share / back.
-func GreetingResultKeyboard(lang string, eventID int64, tone string, lastTplID int64, greetingText string) *gotgbot.InlineKeyboardMarkup {
+// GreetingResultKeyboard is the S14 result screen: another / share / share-us / back.
+//
+// The share button uses a t.me/share/url link rather than
+// SwitchInlineQueryChosenChat: this bot has no inline_query handler, so a
+// switch-inline button opens the target chat with "@BotUsername
+// <greeting>" sitting unresolved in the compose box — hitting send posts
+// that literally, with the bot's username stamped above the greeting.
+// t.me/share/url instead opens Telegram's native forward picker and sends
+// only the given text.
+func GreetingResultKeyboard(lang string, eventID int64, tone string, lastTplID int64, greetingText, botUsername string) *gotgbot.InlineKeyboardMarkup {
 	toneVal := tone
 	anotherBtn := tplBtn(i18n.T("greeting.another", lang, nil), "pick", &toneVal, &eventID, &lastTplID)
 	shareBtn := gotgbot.InlineKeyboardButton{
 		Text: i18n.T("greeting.share", lang, nil),
-		SwitchInlineQueryChosenChat: &gotgbot.SwitchInlineQueryChosenChat{
-			Query: greetingText, AllowUserChats: true, AllowGroupChats: true,
-		},
+		Url:  core.ShareURL(greetingText),
+	}
+	botLink := "https://t.me/" + botUsername
+	shareUsBtn := gotgbot.InlineKeyboardButton{
+		Text: i18n.T("greeting.share_us", lang, nil),
+		Url:  core.ShareURLWithLink(botLink, i18n.T("greeting.share_us_text", lang, map[string]any{"link": botLink})),
 	}
 	backBtn := tplBtn(i18n.T("common.back", lang, nil), "style", nil, &eventID, nil)
-	return &gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{anotherBtn, shareBtn}, {backBtn}}}
+	return &gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{anotherBtn, shareBtn}, {shareUsBtn}, {backBtn}}}
 }
 
 // AIPromptKeyboard is shown under the copy-paste AI prompt.

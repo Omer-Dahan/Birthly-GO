@@ -85,8 +85,8 @@ func TestLoad_AppliesDefaults(t *testing.T) {
 	if cfg.RateLimitCallbacks != 25 {
 		t.Errorf("RateLimitCallbacks = %d, want 25", cfg.RateLimitCallbacks)
 	}
-	if cfg.MaxEventsPerUser != 1000 {
-		t.Errorf("MaxEventsPerUser = %d, want 1000", cfg.MaxEventsPerUser)
+	if cfg.MaxEventsPerUser != 250 {
+		t.Errorf("MaxEventsPerUser = %d, want 250", cfg.MaxEventsPerUser)
 	}
 	if !cfg.AutoBackupEnabled {
 		t.Error("AutoBackupEnabled = false, want true")

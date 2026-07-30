@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"strconv"
-	"strings"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
@@ -27,7 +26,8 @@ func RegisterEventList(dispatcher *ext.Dispatcher) {
 	dispatcher.AddHandler(handlers.NewCallback(listActionFilter("p"), cbListPage))
 	dispatcher.AddHandler(handlers.NewCallback(listActionFilter("sort"), cbSortMenu))
 	dispatcher.AddHandler(handlers.NewCallback(listActionFilter("filt"), cbFilterMenu))
-	dispatcher.AddHandler(handlers.NewCallback(listActionFilter("fset"), cbListSet))
+	dispatcher.AddHandler(handlers.NewCallback(listActionFilter("fset_sort"), cbListSet))
+	dispatcher.AddHandler(handlers.NewCallback(listActionFilter("fset_filt"), cbListSet))
 }
 
 func listActionFilter(action string) filters.CallbackQuery {
@@ -161,12 +161,12 @@ func cbListSet(b *gotgbot.Bot, ctx *ext.Context) error {
 	if err != nil {
 		return err
 	}
-	kind, value, _ := strings.Cut(l.Value, ":")
+	value := l.Value
 
 	switch {
-	case kind == "sort" && validSortValues[value]:
+	case l.Action == "fset_sort" && validSortValues[value]:
 		user.ListSort = value
-	case kind == "filt" && validFilterValues[value]:
+	case l.Action == "fset_filt" && validFilterValues[value]:
 		if value == "all" {
 			user.ListFilter = nil
 		} else {

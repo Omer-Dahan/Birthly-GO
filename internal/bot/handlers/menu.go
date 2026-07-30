@@ -28,9 +28,12 @@ func RenderHome(ctx context.Context, db repo.DBTX, user *models.User) (string, *
 
 	lines := []string{i18n.T("screen.home.title", lang, nil), ""}
 
-	if summary.NearestEvent == nil {
+	switch {
+	case summary.TotalCount == 0:
 		lines = append(lines, i18n.T("screen.home.empty", lang, nil))
-	} else {
+	case summary.NearestEvent == nil:
+		lines = append(lines, i18n.T("screen.home.none_soon", lang, map[string]any{"count": summary.TotalCount}))
+	default:
 		lines = append(lines, i18n.T("screen.home.today", lang, map[string]any{"count": summary.TodayCount}))
 		lines = append(lines, i18n.T("screen.home.week", lang, map[string]any{"count": summary.WeekCount}))
 		name := core.FormatName(summary.NearestEvent.FirstName, summary.NearestEvent.LastName)
@@ -73,13 +76,25 @@ func renderHomeAndEdit(b *gotgbot.Bot, ctx *ext.Context) error {
 	return nil
 }
 
-func helpTextAndKeyboard(lang string) (string, *gotgbot.InlineKeyboardMarkup) {
+func helpTextAndKeyboard(lang, botUsername string) (string, *gotgbot.InlineKeyboardMarkup) {
 	text := i18n.T("help.title", lang, nil) + "\n\n" + i18n.T("help.body", lang, nil)
-	return text, keyboards.HelpKeyboard(lang)
+	return text, keyboards.HelpKeyboard(lang, botUsername)
 }
 
 // RegisterMenu wires the menu/home/help handlers into the dispatcher.
 func RegisterMenu(dispatcher *ext.Dispatcher) {
+	// Edge pagination arrows and the page indicator use a noop callback_data
+	// when there's nothing to navigate to. Without a dedicated handler these
+	// fall through to fallbackCallback's "action unavailable" alert, which
+	// reads as an error even though tapping a disabled-looking arrow is a
+	// normal no-op.
+	dispatcher.AddHandler(handlers.NewCallback(
+		func(cq *gotgbot.CallbackQuery) bool { return cq.Data == callbacks.PrefixNoop },
+		func(b *gotgbot.Bot, ctx *ext.Context) error {
+			AnswerCallback(b, ctx.CallbackQuery, "")
+			return nil
+		},
+	))
 	dispatcher.AddHandler(handlers.NewCallback(
 		callbackPrefixAction(callbacks.PrefixMenu, "home"),
 		func(b *gotgbot.Bot, ctx *ext.Context) error { return renderHomeAndEdit(b, ctx) },
@@ -101,7 +116,7 @@ func RegisterMenu(dispatcher *ext.Dispatcher) {
 		callbackPrefixAction(callbacks.PrefixMenu, "help"),
 		func(b *gotgbot.Bot, ctx *ext.Context) error {
 			user := User(ctx)
-			text, kb := helpTextAndKeyboard(user.Language)
+			text, kb := helpTextAndKeyboard(user.Language, router.ConfigFromContext(ctx).BotUsername)
 			if err := EditOrIgnore(b, ctx.CallbackQuery, text, kb); err != nil {
 				return err
 			}
@@ -111,7 +126,7 @@ func RegisterMenu(dispatcher *ext.Dispatcher) {
 	))
 	dispatcher.AddHandler(handlers.NewCommand("help", func(b *gotgbot.Bot, ctx *ext.Context) error {
 		user := User(ctx)
-		text, kb := helpTextAndKeyboard(user.Language)
+		text, kb := helpTextAndKeyboard(user.Language, router.ConfigFromContext(ctx).BotUsername)
 		_, err := ctx.EffectiveMessage.Reply(b, text, &gotgbot.SendMessageOpts{ReplyMarkup: kb, ParseMode: "HTML"})
 		return err
 	}))

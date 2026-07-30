@@ -36,8 +36,11 @@ type UserStats struct {
 	Youngest        *EventAge
 	Oldest          *EventAge
 	AvgAge          *float64
-	WithoutYear     int
-	Muted           int
+	// AgeBuckets counts events by decade of age (key = decade start: 0, 10,
+	// 20, ...), for the S13 "by ages" drilldown.
+	AgeBuckets  map[int]int
+	WithoutYear int
+	Muted       int
 }
 
 // GetUserStats loads every non-deleted event once and computes all fields
@@ -58,6 +61,7 @@ func GetUserStats(ctx context.Context, db repo.DBTX, user *models.User) (*UserSt
 		ByCategory: map[string]int{},
 		ByType:     map[string]int{},
 		ByMonth:    map[int]int{},
+		AgeBuckets: map[int]int{},
 	}
 	var ages []EventAge
 
@@ -105,6 +109,7 @@ func GetUserStats(ctx context.Context, db repo.DBTX, user *models.User) (*UserSt
 		if event.Year != nil && occ != nil {
 			if age, ok := core.AgeAt(event.CalendarType, event.Year, *occ); ok {
 				ages = append(ages, EventAge{Event: event, Age: age})
+				stats.AgeBuckets[(age/10)*10]++
 			}
 		}
 	}

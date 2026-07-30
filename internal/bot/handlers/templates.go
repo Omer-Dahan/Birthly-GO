@@ -134,12 +134,12 @@ func cbBackToStyle(b *gotgbot.Bot, ctx *ext.Context) error {
 	return nil
 }
 
-func renderGreetingResult(b *gotgbot.Bot, cq *gotgbot.CallbackQuery, user *models.User, event *models.Event, tpl *models.GreetingTemplate) error {
+func renderGreetingResult(b *gotgbot.Bot, cq *gotgbot.CallbackQuery, user *models.User, event *models.Event, tpl *models.GreetingTemplate, botUsername string) error {
 	greetingText := services.RenderTemplate(tpl, event, user)
 	name := core.Esc(core.FormatName(event.FirstName, event.LastName))
 	body := "💌 " + i18n.T("greeting.result.title", user.Language, map[string]any{"name": name}) +
 		"\n\n<code>" + core.Esc(greetingText) + "</code>\n\n<i>" + i18n.T("greeting.result.hint", user.Language, nil) + "</i>"
-	kb := keyboards.GreetingResultKeyboard(user.Language, event.ID, tpl.Tone, tpl.ID, greetingText)
+	kb := keyboards.GreetingResultKeyboard(user.Language, event.ID, tpl.Tone, tpl.ID, greetingText, botUsername)
 	return EditOrIgnore(b, cq, body, kb)
 }
 
@@ -178,7 +178,8 @@ func cbGreetingPick(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	if err := renderGreetingResult(b, ctx.CallbackQuery, user, event, tpl); err != nil {
+	botUsername := router.ConfigFromContext(ctx).BotUsername
+	if err := renderGreetingResult(b, ctx.CallbackQuery, user, event, tpl, botUsername); err != nil {
 		return err
 	}
 	AnswerCallback(b, ctx.CallbackQuery, "")
@@ -271,7 +272,8 @@ func cbUsePersonalTemplate(b *gotgbot.Bot, ctx *ext.Context) error {
 		return err
 	}
 
-	if err := renderGreetingResult(b, ctx.CallbackQuery, user, event, tpl); err != nil {
+	botUsername := router.ConfigFromContext(ctx).BotUsername
+	if err := renderGreetingResult(b, ctx.CallbackQuery, user, event, tpl, botUsername); err != nil {
 		return err
 	}
 	AnswerCallback(b, ctx.CallbackQuery, "")

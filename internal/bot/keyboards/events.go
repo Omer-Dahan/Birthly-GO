@@ -89,11 +89,14 @@ func CardKeyboard(lang string, eventID int64, isActive bool, shareText string) *
 	if !isActive {
 		muteKey = "card.unmute"
 	}
+	// A t.me/share/url link, not SwitchInlineQueryChosenChat: this bot has
+	// no inline_query handler, so a switch-inline button would leave
+	// "@BotUsername <shareText>" sitting unresolved in the target chat's
+	// compose box — hitting send posts that literally (see
+	// GreetingResultKeyboard's doc comment for the same issue).
 	shareBtn := gotgbot.InlineKeyboardButton{
 		Text: i18n.T("card.share", lang, nil),
-		SwitchInlineQueryChosenChat: &gotgbot.SwitchInlineQueryChosenChat{
-			Query: shareText, AllowUserChats: true, AllowGroupChats: true,
-		},
+		Url:  core.ShareURL(shareText),
 	}
 	back := gotgbot.InlineKeyboardButton{Text: i18n.T("card.back_to_list", lang, nil), CallbackData: callbacks.Menu{Action: "list"}.Encode()}
 	home := HomeButton(i18n.T("common.home", lang, nil))
@@ -249,7 +252,9 @@ func ListKeyboard(lang string, rowLabels []EventRowLabel, page, totalPages int) 
 	searchBtn := gotgbot.InlineKeyboardButton{Text: i18n.T("list.search_btn", lang, nil), CallbackData: callbacks.Menu{Action: "srch"}.Encode()}
 	home := HomeButton(i18n.T("common.home", lang, nil))
 
-	rows = append(rows, PageRow(page, totalPages))
+	if totalPages > 1 {
+		rows = append(rows, PageRow(page, totalPages))
+	}
 	rows = append(rows, []gotgbot.InlineKeyboardButton{sortBtn, filterBtn, searchBtn})
 	rows = append(rows, []gotgbot.InlineKeyboardButton{home})
 	return &gotgbot.InlineKeyboardMarkup{InlineKeyboard: rows}
@@ -263,7 +268,7 @@ func SortMenuKeyboard(lang string) *gotgbot.InlineKeyboardMarkup {
 	for i, opt := range sortOptions {
 		buttons[i] = gotgbot.InlineKeyboardButton{
 			Text:         i18n.T("list.sort_"+opt, lang, nil),
-			CallbackData: callbacks.List{Action: "fset", Value: "sort:" + opt}.Encode(),
+			CallbackData: callbacks.List{Action: "fset_sort", Value: opt}.Encode(),
 		}
 	}
 	rows := BuildGrid(buttons, 2)
@@ -277,7 +282,7 @@ func FilterMenuKeyboard(lang string) *gotgbot.InlineKeyboardMarkup {
 	for i, opt := range filterOptions {
 		buttons[i] = gotgbot.InlineKeyboardButton{
 			Text:         i18n.T("list.filter_option_"+opt, lang, nil),
-			CallbackData: callbacks.List{Action: "fset", Value: "filt:" + opt}.Encode(),
+			CallbackData: callbacks.List{Action: "fset_filt", Value: opt}.Encode(),
 		}
 	}
 	back := gotgbot.InlineKeyboardButton{Text: i18n.T("common.back", lang, nil), CallbackData: callbacks.Menu{Action: "list"}.Encode()}
