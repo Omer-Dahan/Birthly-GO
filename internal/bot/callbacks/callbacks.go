@@ -201,14 +201,19 @@ type Reminder struct {
 	Action  string // add | off | time | tog | del
 	Value   *string
 	EventID *int64
+	// RuleID is only set for the "time" action, which needs to carry both
+	// the chosen time (in Value) and the rule being changed — packing both
+	// into Value (as "HH-MM:ruleID") used to collide with this format's
+	// colon separator and made every time-picker button undecodable.
+	RuleID *int64
 }
 
 func (c Reminder) Encode() string {
-	return join(PrefixReminder, c.Action, optStr(c.Value), optInt(c.EventID))
+	return join(PrefixReminder, c.Action, optStr(c.Value), optInt(c.EventID), optInt(c.RuleID))
 }
 
 func DecodeReminder(data string) (Reminder, error) {
-	parts, err := split(data, PrefixReminder, 3)
+	parts, err := split(data, PrefixReminder, 4)
 	if err != nil {
 		return Reminder{}, err
 	}
@@ -216,7 +221,11 @@ func DecodeReminder(data string) (Reminder, error) {
 	if err != nil {
 		return Reminder{}, fmt.Errorf("callbacks: rem event_id: %w", err)
 	}
-	return Reminder{Action: parts[0], Value: parseOptStr(parts[1]), EventID: eventID}, nil
+	ruleID, err := parseOptInt(parts[3])
+	if err != nil {
+		return Reminder{}, fmt.Errorf("callbacks: rem rule_id: %w", err)
+	}
+	return Reminder{Action: parts[0], Value: parseOptStr(parts[1]), EventID: eventID, RuleID: ruleID}, nil
 }
 
 // ── set: SettingsCallback ───────────────────────────────────────────────

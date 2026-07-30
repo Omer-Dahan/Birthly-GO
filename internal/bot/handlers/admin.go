@@ -323,7 +323,7 @@ func cmdUserinfo(b *gotgbot.Bot, ctx *ext.Context) error {
 		return err
 	}
 
-	username := "—"
+	username := "-"
 	if info.Username != nil && *info.Username != "" {
 		username = *info.Username
 	}

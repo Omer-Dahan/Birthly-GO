@@ -309,17 +309,18 @@ func cbRemSetTime(b *gotgbot.Bot, ctx *ext.Context) error {
 	if err != nil {
 		return err
 	}
-	packed := ""
-	if rc.Value != nil {
-		packed = *rc.Value
-	}
-
-	hour, mm, ruleID, ok := parsePackedRuleTime(packed)
-	if !ok {
+	if rc.Value == nil || rc.RuleID == nil {
 		AnswerCallbackAlert(b, ctx.CallbackQuery, i18n.T("error.generic", user.Language, nil))
 		return nil
 	}
+	hh, mm, found := strings.Cut(*rc.Value, "-")
+	if !found || !isAllDigits(hh) || !isAllDigits(mm) {
+		AnswerCallbackAlert(b, ctx.CallbackQuery, i18n.T("error.generic", user.Language, nil))
+		return nil
+	}
+	hour, _ := strconv.Atoi(hh)
 	sendTime := fmtHHMM(hour, mm)
+	ruleID := *rc.RuleID
 
 	ruleRepo := repo.NewReminderRuleRepo(db, user.ID)
 	rule, err := ruleRepo.GetOwned(context.Background(), ruleID)
@@ -337,24 +338,6 @@ func cbRemSetTime(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	AnswerCallback(b, ctx.CallbackQuery, i18n.T("common.saved", user.Language, nil))
 	return renderRules(context.Background(), b, ctx.CallbackQuery, db, user, rc.EventID)
-}
-
-// parsePackedRuleTime decodes cb_rem_set_time's packed callback value —
-// "HH-MM:{ruleID}" (e.g. "18-00:42") — into its parts. Returns ok=false for
-// anything malformed (missing colon, missing dash, or non-digit segments).
-func parsePackedRuleTime(packed string) (hour int, minute string, ruleID int64, ok bool) {
-	lastColon := strings.LastIndex(packed, ":")
-	if lastColon < 0 {
-		return 0, "", 0, false
-	}
-	timePart, ruleIDPart := packed[:lastColon], packed[lastColon+1:]
-	hh, mm, found := strings.Cut(timePart, "-")
-	if !found || !isAllDigits(hh) || !isAllDigits(mm) || !isAllDigits(ruleIDPart) {
-		return 0, "", 0, false
-	}
-	h, _ := strconv.Atoi(hh)
-	id, _ := strconv.ParseInt(ruleIDPart, 10, 64)
-	return h, mm, id, true
 }
 
 func fmtHHMM(hour int, mm string) string {

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"birthly/internal/bot/callbacks"
 	"birthly/internal/core"
 	"birthly/internal/services"
 	"birthly/internal/store"
@@ -109,27 +110,30 @@ func TestFmtHHMM(t *testing.T) {
 	}
 }
 
-func TestParsePackedRuleTime(t *testing.T) {
-	hour, mm, ruleID, ok := parsePackedRuleTime("18-00:42")
-	if !ok || hour != 18 || mm != "00" || ruleID != 42 {
-		t.Errorf("parsePackedRuleTime(18-00:42) = (%d,%q,%d,%v), want (18,00,42,true)", hour, mm, ruleID, ok)
-	}
+// TestReminderTimeCallback_RoundTrip pins down a regression: the "time"
+// action used to pack "HH-MM:ruleID" into Reminder.Value, which collided
+// with callback_data's own colon field separator and made DecodeReminder
+// fail for every time-picker button (worse yet with EventID also set, i.e.
+// picking a time for a per-event reminder rule). RuleID is now its own
+// field precisely so Value never needs a second colon.
+func TestReminderTimeCallback_RoundTrip(t *testing.T) {
+	eventID := int64(7)
+	ruleID := int64(42)
+	v := "18-00"
+	data := callbacks.Reminder{Action: "time", Value: &v, EventID: &eventID, RuleID: &ruleID}.Encode()
 
-	_, _, _, ok = parsePackedRuleTime("no-colon-here")
-	if ok {
-		t.Error("parsePackedRuleTime with no colon should return ok=false")
+	rc, err := callbacks.DecodeReminder(data)
+	if err != nil {
+		t.Fatalf("DecodeReminder(%q): %v", data, err)
 	}
-	_, _, _, ok = parsePackedRuleTime("1800:42")
-	if ok {
-		t.Error("parsePackedRuleTime with no dash in the time part should return ok=false")
+	if rc.Value == nil || *rc.Value != "18-00" {
+		t.Errorf("Value = %v, want 18-00", rc.Value)
 	}
-	_, _, _, ok = parsePackedRuleTime("18-aa:42")
-	if ok {
-		t.Error("parsePackedRuleTime with non-digit minutes should return ok=false")
+	if rc.EventID == nil || *rc.EventID != 7 {
+		t.Errorf("EventID = %v, want 7", rc.EventID)
 	}
-	_, _, _, ok = parsePackedRuleTime("18-00:abc")
-	if ok {
-		t.Error("parsePackedRuleTime with non-digit rule id should return ok=false")
+	if rc.RuleID == nil || *rc.RuleID != 42 {
+		t.Errorf("RuleID = %v, want 42", rc.RuleID)
 	}
 }
 

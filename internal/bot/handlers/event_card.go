@@ -44,9 +44,9 @@ func shareText(user *models.User, event *models.Event) string {
 	countdown := core.FormatCountdown(core.DaysUntil(*event.NextOccurrence, today))
 	dateStr := core.FormatDate(*event.NextOccurrence, user.DateFormat)
 	if age, ok := core.AgeAt(event.CalendarType, event.Year, *event.NextOccurrence); ok {
-		return "🎂 " + name + " — " + dateStr + " (" + strconv.Itoa(age) + ") — " + countdown
+		return "🎂 " + name + " · " + dateStr + " (" + strconv.Itoa(age) + ") · " + countdown
 	}
-	return "🎂 " + name + " — " + dateStr + " — " + countdown
+	return "🎂 " + name + " · " + dateStr + " · " + countdown
 }
 
 // RenderCard builds the S8 event card text + keyboard for eventID, scoped

@@ -26,7 +26,7 @@ func ruleLabel(rule *models.ReminderRule, lang string) string {
 	if rule.OffsetDays != nil {
 		label = i18n.T("rem.offset."+strconv.Itoa(*rule.OffsetDays), lang, nil)
 	}
-	timeStr := "—"
+	timeStr := "-"
 	if rule.SendTime != nil && *rule.SendTime != "" {
 		timeStr = *rule.SendTime
 	}
@@ -72,15 +72,17 @@ func RuleMenuKeyboard(lang string, ruleID int64, eventID *int64) *gotgbot.Inline
 	return &gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{toggle}, {changeTime}, {del}, {back}}}
 }
 
-// TimeChoiceKeyboard: value packs "<HH-MM>:<rule_id>" — SPEC.md's
-// "rem:time:<HH-MM>" schema extended with the rule id, since ReminderCallback
-// has no third slot.
+// TimeChoiceKeyboard sets the "HH-MM" choice in Value and the rule being
+// changed in the dedicated RuleID field (see Reminder's doc comment).
 func TimeChoiceKeyboard(lang string, ruleID int64, eventID *int64) *gotgbot.InlineKeyboardMarkup {
 	idStr := strconv.FormatInt(ruleID, 10)
 	buttons := make([]gotgbot.InlineKeyboardButton, len(timeChoices))
 	for i, tm := range timeChoices {
-		packed := strings.ReplaceAll(tm, ":", "-") + ":" + idStr
-		buttons[i] = remBtn(tm, "time", &packed, eventID)
+		v := strings.ReplaceAll(tm, ":", "-")
+		buttons[i] = gotgbot.InlineKeyboardButton{
+			Text:         tm,
+			CallbackData: callbacks.Reminder{Action: "time", Value: &v, EventID: eventID, RuleID: &ruleID}.Encode(),
+		}
 	}
 	rows := BuildGrid(buttons, 3)
 	back := remBtn(i18n.T("common.back", lang, nil), "menu", &idStr, eventID)

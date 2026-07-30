@@ -180,7 +180,7 @@ func ValidateName(value string) (string, error) {
 		return "", validationErrorf("מה השם? 🙂")
 	}
 	if utf8RuneCount(cleaned) > NameMaxLen {
-		return "", validationErrorf("זה ארוך מדי — עד %d תווים.", NameMaxLen)
+		return "", validationErrorf("זה ארוך מדי · עד %d תווים.", NameMaxLen)
 	}
 	return cleaned, nil
 }
@@ -188,7 +188,7 @@ func ValidateName(value string) (string, error) {
 func validateOptionalText(value string, maxLen int) (string, error) {
 	cleaned := strings.TrimSpace(stripControlChars(value))
 	if utf8RuneCount(cleaned) > maxLen {
-		return "", validationErrorf("זה ארוך מדי — עד %d תווים.", maxLen)
+		return "", validationErrorf("זה ארוך מדי · עד %d תווים.", maxLen)
 	}
 	return cleaned, nil
 }
@@ -210,7 +210,7 @@ var (
 func ValidatePhone(value string) (string, error) {
 	cleaned := strings.TrimSpace(stripControlChars(value))
 	if utf8RuneCount(cleaned) > PhoneMaxLen {
-		return "", validationErrorf("זה ארוך מדי — עד %d תווים.", PhoneMaxLen)
+		return "", validationErrorf("זה ארוך מדי · עד %d תווים.", PhoneMaxLen)
 	}
 	digitsAndPlus := phoneSeparatorsRE.ReplaceAllString(cleaned, "")
 	if !phoneShapeRE.MatchString(digitsAndPlus) {

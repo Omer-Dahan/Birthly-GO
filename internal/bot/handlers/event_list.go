@@ -46,9 +46,9 @@ func rowLabel(user *models.User, event *models.Event) string {
 	countdown := core.FormatCountdown(core.DaysUntil(*event.NextOccurrence, today))
 
 	if age, ok := core.AgeAt(event.CalendarType, event.Year, *event.NextOccurrence); ok {
-		return name + " — " + countdown + " (" + strconv.Itoa(age) + ")"
+		return name + " · " + countdown + " (" + strconv.Itoa(age) + ")"
 	}
-	return name + " — " + countdown
+	return name + " · " + countdown
 }
 
 func renderList(ctx context.Context, db repo.DBTX, user *models.User, page, pageSize int) (string, *gotgbot.InlineKeyboardMarkup, error) {

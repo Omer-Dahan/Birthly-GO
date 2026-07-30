@@ -11,10 +11,10 @@ import (
 var birthdayPrefixesHe = map[int]string{
 	0:  "🎂 <b>היום יום ההולדת של {name}!</b>",
 	1:  "🎁 מחר יום ההולדת של <b>{name}</b>",
-	2:  "🎁 בעוד יומיים — יום ההולדת של <b>{name}</b>",
-	7:  "🥳 בעוד שבוע — יום ההולדת של <b>{name}</b>",
-	14: "🗓 בעוד שבועיים — יום ההולדת של <b>{name}</b>",
-	30: "🗓 בעוד חודש — יום ההולדת של <b>{name}</b>",
+	2:  "🎁 בעוד יומיים · יום ההולדת של <b>{name}</b>",
+	7:  "🥳 בעוד שבוע · יום ההולדת של <b>{name}</b>",
+	14: "🗓 בעוד שבועיים · יום ההולדת של <b>{name}</b>",
+	30: "🗓 בעוד חודש · יום ההולדת של <b>{name}</b>",
 }
 
 var typeEmojisHe = map[string]string{
@@ -74,10 +74,10 @@ func RenderReminder(user *models.User, event *models.Event, rule *models.Reminde
 			if tpl, ok := birthdayPrefixesHe[offset]; ok {
 				header = strings.ReplaceAll(tpl, "{name}", name)
 			} else {
-				header = "📅 בעוד " + strconv.Itoa(offset) + " ימים — יום ההולדת של <b>" + name + "</b>"
+				header = "📅 בעוד " + strconv.Itoa(offset) + " ימים · יום ההולדת של <b>" + name + "</b>"
 			}
 		case etype == core.EventTypeMemorial:
-			header = typeEmojisHe[core.EventTypeMemorial] + " <b>אזכרה — " + name + "</b>"
+			header = typeEmojisHe[core.EventTypeMemorial] + " <b>אזכרה · " + name + "</b>"
 		default:
 			emoji := typeEmojisHe[etype]
 			if emoji == "" {
@@ -89,14 +89,14 @@ func RenderReminder(user *models.User, event *models.Event, rule *models.Reminde
 			} else if label == "" {
 				label = etype
 			}
-			header = emoji + " <b>" + label + " — " + name + "</b>"
+			header = emoji + " <b>" + label + " · " + name + "</b>"
 		}
 	} else {
 		header = "🎂 <b>" + name + "</b>'s birthday"
 		if offset == 1 {
 			header = "🎁 Tomorrow is <b>" + name + "</b>'s birthday"
 		} else if offset > 1 {
-			header = "📅 In " + strconv.Itoa(offset) + " days — <b>" + name + "</b>'s birthday"
+			header = "📅 In " + strconv.Itoa(offset) + " days · <b>" + name + "</b>'s birthday"
 		}
 	}
 

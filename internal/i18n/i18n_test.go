@@ -22,7 +22,7 @@ func TestT_MissingKeyReturnsKeyItself(t *testing.T) {
 
 func TestT_FormatsKwargs(t *testing.T) {
 	got := T("error.too_long", "he", map[string]any{"max": 64})
-	want := "זה ארוך מדי — עד 64 תווים."
+	want := "זה ארוך מדי · עד 64 תווים."
 	if got != want {
 		t.Errorf("T(error.too_long, he, max=64) = %q, want %q", got, want)
 	}

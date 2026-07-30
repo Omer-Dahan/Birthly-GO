@@ -141,13 +141,13 @@ func fieldDisplayValue(lang, field string, ev EventFieldValues) string {
 		if ev.HasPhoto {
 			return i18n.T("common.saved", lang, nil)
 		}
-		return "—"
+		return "-"
 	}
 	if raw == nil || *raw == "" {
 		if field == "event_type" {
 			return i18n.T("common.unknown", lang, nil)
 		}
-		return "—"
+		return "-"
 	}
 	switch field {
 	case "category":
