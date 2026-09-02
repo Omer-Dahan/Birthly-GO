@@ -5,5 +5,4 @@
 *.db-wal
 *.db-shm
 .env
-birthly
 data/
