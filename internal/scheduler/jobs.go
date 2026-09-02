@@ -48,20 +48,70 @@ type fireKey struct {
 	y, mo, d, h, mi int
 }
 
-// TickReminders is the main reminder engine tick — runs every
-// SchedulerTickSeconds seconds. Algorithm (SPEC.md ch.18), ported line for
-// line from app/scheduler/jobs.py's tick_reminders since a silent bug here
-// is a reminder sent (or not sent) on the wrong date:
+// RecoverPending processes pending logs in notifications_log whose scheduled_at
+// is in the past. If older than grace period, it marks the log as skipped.
+// If within grace period, it attempts to send the reminder.
+func RecoverPending(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *config.Config, nowUTC time.Time, logger *slog.Logger) error {
+	notifRepo := repo.NewNotificationRepo(db)
+	userRepo := repo.NewUserRepo(db)
+	grace := time.Duration(cfg.ReminderGraceHours) * time.Hour
+
+	pendingLogs, err := notifRepo.GetPendingLogsBefore(ctx, nowUTC)
+	if err != nil {
+		return fmt.Errorf("recover_pending: get logs: %w", err)
+	}
+	if len(pendingLogs) == 0 {
+		return nil
+	}
+
+	logger.Info("recover_pending_start", "count", len(pendingLogs))
+
+	for _, log := range pendingLogs {
+		if nowUTC.Sub(log.ScheduledAt) > grace {
+			if err := notifRepo.MarkSkipped(ctx, log.ID); err != nil {
+				logger.Error("recover_pending: mark skipped failed", "log_id", log.ID, "error", err)
+			} else {
+				logger.Warn("recover_pending_skipped_grace", "log_id", log.ID, "event_id", log.EventID, "scheduled_at", log.ScheduledAt)
+			}
+			continue
+		}
+
+		user, err := userRepo.Get(ctx, log.UserID)
+		if err != nil || user == nil || !user.NotificationsEnabled || user.IsBlocked || user.BotBlockedByUser {
+			_ = notifRepo.MarkSkipped(ctx, log.ID)
+			continue
+		}
+
+		eventRepo := repo.NewEventRepo(db, user.ID)
+		event, err := eventRepo.GetOwned(ctx, log.EventID)
+		if err != nil || event == nil || !event.IsActive || event.DeletedAt != nil {
+			_ = notifRepo.MarkSkipped(ctx, log.ID)
+			continue
+		}
+
+		var rule *models.ReminderRule
+		if log.RuleID != nil {
+			ruleRepo := repo.NewReminderRuleRepo(db, user.ID)
+			rule, _ = ruleRepo.GetOwned(ctx, *log.RuleID)
+		}
+
+		SendReminder(ctx, bot, db, user, event, rule, log.ID, log.OccurrenceDate.Year(), cfg.BroadcastRatePerSec)
+	}
+	return nil
+}
+
+// TickReminders is the main reminder engine tick: runs every
+// SchedulerTickSeconds seconds. Algorithm (SPEC.md ch.18):
 //
-//  1. Query users with events in the next MaxUpcomingDays window.
-//  2. For each user, compute fire_utc for every (event × rule) pair.
-//  3. If fire_utc <= now_utc and within grace, insert pending log row
+//  1. Recover any pending logs from previous interrupted runs.
+//  2. Query users with events in the upcoming window.
+//  3. For each user, compute fire_utc for every (event x rule) pair.
+//  4. If fire_utc <= now_utc and within grace, insert pending log row
 //     (UNIQUE prevents double-send), then send.
-//  4. Recompute next_occurrence for events whose occurrence == today.
+//  5. Advance next_occurrence only for events that are strictly in the past (before todayLocal).
 //
 // nowUTC defaults to time.Now().UTC() in production; tests pass it
-// explicitly for determinism (matching the Python parameter's purpose,
-// though Go has no freezegun-corruption concern to avoid).
+// explicitly for determinism.
 func TickReminders(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *config.Config, nowUTC time.Time, logger *slog.Logger) error {
 	if nowUTC.IsZero() {
 		nowUTC = time.Now().UTC()
@@ -70,8 +120,12 @@ func TickReminders(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *confi
 
 	notifRepo := repo.NewNotificationRepo(db)
 
-	windowStart := time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC)
-	windowEnd := windowStart.AddDate(0, 0, cfg.MaxUpcomingDays)
+	if err := RecoverPending(ctx, bot, db, cfg, nowUTC, logger); err != nil {
+		logger.Error("tick_reminders: recover pending failed", "error", err)
+	}
+
+	windowStart := time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -2)
+	windowEnd := time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, cfg.MaxUpcomingDays+2)
 
 	users, err := notifRepo.ListActiveUsersWithEvents(ctx, windowStart, windowEnd)
 	if err != nil {
@@ -198,23 +252,24 @@ func TickReminders(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *confi
 			}
 		}
 
-		// After processing all rules, recompute next_occurrence for events
-		// where occ == today (the birthday has passed for this year).
+		// Advance next_occurrence for events that are strictly in the past (before todayLocal).
 		events2 := repo.NewEventRepo(db, user.ID)
 		for _, event := range events {
-			if event.NextOccurrence != nil && event.NextOccurrence.Equal(todayLocal) {
+			if event.NextOccurrence == nil || event.NextOccurrence.Before(todayLocal) {
 				newOcc, err := core.NextOccurrence(
 					event.CalendarType, event.Month, event.Day,
-					todayLocal.AddDate(0, 0, 1),
+					todayLocal,
 					user.AdarPolicy, user.Feb29Policy,
 				)
 				if err != nil {
 					logger.Error("tick_reminders: recompute occurrence failed", "event_id", event.ID, "error", err)
 					continue
 				}
-				event.NextOccurrence = &newOcc
-				if _, err := events2.Update(ctx, event); err != nil {
-					return fmt.Errorf("tick_reminders: update recomputed occurrence: %w", err)
+				if event.NextOccurrence == nil || !event.NextOccurrence.Equal(newOcc) {
+					event.NextOccurrence = &newOcc
+					if _, err := events2.Update(ctx, event); err != nil {
+						return fmt.Errorf("tick_reminders: update recomputed occurrence: %w", err)
+					}
 				}
 			}
 		}
@@ -317,7 +372,7 @@ func listAllUsers(ctx context.Context, db *sql.DB) ([]*models.User, error) {
 	return result, nil
 }
 
-// DailyDigest is a stub — full implementation is a later milestone in the
+// DailyDigest is a stub: full implementation is a later milestone in the
 // Python app too (app/scheduler/jobs.py: "Full implementation: M6"). Ported
 // as a stub, not invented.
 func DailyDigest(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, logger *slog.Logger) error {

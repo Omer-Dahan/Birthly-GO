@@ -5,4 +5,5 @@
 *.db-wal
 *.db-shm
 .env
-data/logs/bot.log
+birthly
+data/

@@ -56,13 +56,13 @@ func genderPhrase(event *models.Event, lang string) string {
 }
 
 // RenderReminder builds the HTML reminder message text (SPEC.md S16).
-// occurrenceYear is the Gregorian year of the next occurrence — used to
+// occurrenceYear is the Gregorian year of the next occurrence: used to
 // compute the age displayed in the message.
 func RenderReminder(user *models.User, event *models.Event, rule *models.ReminderRule, occurrenceYear int) string {
 	name := displayName(event)
 	lang := user.Language
 	offset := 0
-	if rule.OffsetDays != nil {
+	if rule != nil && rule.OffsetDays != nil {
 		offset = *rule.OffsetDays
 	}
 	etype := event.EventType
