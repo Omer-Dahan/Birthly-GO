@@ -24,6 +24,7 @@
   "menu.stats": "📊 Statistics",
   "menu.settings": "⚙️ Settings",
   "menu.help": "❓ Help",
+  "menu.channel": "📣 Our Channel",
   "screen.home.title": "🏠 <b>No More Oops</b>",
   "screen.home.today": "🎂 Celebrating today: <b>{count}</b>",
   "screen.home.week": "📅 This week: <b>{count}</b>",

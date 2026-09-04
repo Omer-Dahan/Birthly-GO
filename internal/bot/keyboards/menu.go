@@ -8,13 +8,12 @@ import (
 	"birthly/internal/i18n"
 )
 
-// channelURL is the operator's personal Telegram channel for bot updates —
-// linked from the help screen (SPEC ask: give users a way to follow along
-// beyond this one bot).
+// channelURL is the operator's personal Telegram channel for bot updates,
+// linked from the home and help screens.
 const channelURL = "https://t.me/YD_IL_BOTS"
 
 // HomeKeyboard is the S1 home screen keyboard: 2 buttons per row (SPEC.md
-// chapter 15) — port of app/keyboards/menu.py's home_keyboard.
+// chapter 15), port of app/keyboards/menu.py's home_keyboard.
 func HomeKeyboard(lang string) *gotgbot.InlineKeyboardMarkup {
 	btn := func(key, action string) gotgbot.InlineKeyboardButton {
 		return gotgbot.InlineKeyboardButton{
@@ -22,12 +21,16 @@ func HomeKeyboard(lang string) *gotgbot.InlineKeyboardMarkup {
 			CallbackData: callbacks.Menu{Action: action}.Encode(),
 		}
 	}
+	channelBtn := gotgbot.InlineKeyboardButton{
+		Text: i18n.T("menu.channel", lang, nil),
+		Url:  channelURL,
+	}
 	return &gotgbot.InlineKeyboardMarkup{
 		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 			{btn("menu.add", "add"), btn("menu.list", "list")},
 			{btn("menu.search", "srch"), btn("menu.reminders", "rem")},
 			{btn("menu.stats", "stat"), btn("menu.settings", "set")},
-			{btn("menu.help", "help")},
+			{btn("menu.help", "help"), channelBtn},
 		},
 	}
 }

@@ -24,6 +24,7 @@
   "menu.stats": "📊 סטטיסטיקות",
   "menu.settings": "⚙️ הגדרות",
   "menu.help": "❓ עזרה",
+  "menu.channel": "📣 הערוץ שלנו",
   "screen.home.title": "🏠 <b>בלי פאדיחות</b>",
   "screen.home.today": "🎂 היום חוגגים: <b>{count}</b>",
   "screen.home.week": "📅 השבוע: <b>{count}</b>",
