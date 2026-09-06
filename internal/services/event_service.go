@@ -21,7 +21,7 @@ type NewEventInput struct {
 	Gender       *string
 	// SecondaryMonth/SecondaryDay add a second, gregorian-calendar recurring
 	// date to the same event (SPEC "dual dates" feature). Only honored when
-	// CalendarType is hebrew — ignored otherwise, since the add flow never
+	// CalendarType is hebrew: ignored otherwise, since the add flow never
 	// offers the reverse direction.
 	SecondaryMonth *int
 	SecondaryDay   *int

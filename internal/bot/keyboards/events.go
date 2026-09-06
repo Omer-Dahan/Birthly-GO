@@ -82,7 +82,7 @@ func SecondaryDatePromptKeyboard(lang string) *gotgbot.InlineKeyboardMarkup {
 }
 
 // SecondaryDateStepKeyboard is shown while waiting for the free-text
-// secondary-date message (no "no year"/"hebrew" branches — the secondary
+// secondary-date message (no "no year"/"hebrew" branches: the secondary
 // date is always gregorian and never carries its own year).
 func SecondaryDateStepKeyboard(lang string) *gotgbot.InlineKeyboardMarkup {
 	return &gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{CancelButton(i18n.T("common.cancel", lang, nil))}}}

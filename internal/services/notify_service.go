@@ -76,7 +76,7 @@ func trackMarkerLine(trackCalendarType, lang string) string {
 // RenderReminder builds the HTML reminder message text (SPEC.md S16).
 // occurrence is the actual date this reminder fires for (the track's own
 // next_occurrence). trackCalendarType identifies which calendar track fired
-// ("hebrew" or "gregorian") — only surfaced in the text when the event has a
+// ("hebrew" or "gregorian"): only surfaced in the text when the event has a
 // secondary date, so a single-date event's message is unchanged.
 func RenderReminder(user *models.User, event *models.Event, rule *models.ReminderRule, occurrence time.Time, trackCalendarType string) string {
 	name := displayName(event)
