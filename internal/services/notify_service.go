@@ -3,6 +3,7 @@ package services
 import (
 	"strconv"
 	"strings"
+	"time"
 
 	"birthly/internal/core"
 	"birthly/internal/store/models"
@@ -55,10 +56,29 @@ func genderPhrase(event *models.Event, lang string) string {
 	return "celebrating"
 }
 
+// trackMarkerLine names which calendar track a reminder fires for, so a
+// dual-date event's two reminders don't read as duplicates of each other.
+// Only shown when the event actually has a secondary date configured.
+func trackMarkerLine(trackCalendarType, lang string) string {
+	isHebrew := trackCalendarType == core.CalendarTypeHebrew
+	if lang == core.LanguageHe {
+		if isHebrew {
+			return "🗓 לפי הלוח העברי"
+		}
+		return "🗓 לפי הלוח הלועזי"
+	}
+	if isHebrew {
+		return "🗓 Hebrew calendar date"
+	}
+	return "🗓 Gregorian calendar date"
+}
+
 // RenderReminder builds the HTML reminder message text (SPEC.md S16).
-// occurrenceYear is the Gregorian year of the next occurrence: used to
-// compute the age displayed in the message.
-func RenderReminder(user *models.User, event *models.Event, rule *models.ReminderRule, occurrenceYear int) string {
+// occurrence is the actual date this reminder fires for (the track's own
+// next_occurrence). trackCalendarType identifies which calendar track fired
+// ("hebrew" or "gregorian") — only surfaced in the text when the event has a
+// secondary date, so a single-date event's message is unchanged.
+func RenderReminder(user *models.User, event *models.Event, rule *models.ReminderRule, occurrence time.Time, trackCalendarType string) string {
 	name := displayName(event)
 	lang := user.Language
 	offset := 0
@@ -100,15 +120,20 @@ func RenderReminder(user *models.User, event *models.Event, rule *models.Reminde
 		}
 	}
 
-	lines := []string{header, ""}
+	lines := []string{header}
+	if event.SecondaryMonth != nil {
+		lines = append(lines, trackMarkerLine(trackCalendarType, lang))
+	}
+	lines = append(lines, "")
 
-	if etype == core.EventTypeBirthday && event.Year != nil {
-		age := occurrenceYear - *event.Year
-		phrase := genderPhrase(event, lang)
-		if lang == core.LanguageHe {
-			lines = append(lines, "🎈 "+phrase+" <b>"+strconv.Itoa(age)+"</b>")
-		} else {
-			lines = append(lines, "🎈 Turning <b>"+strconv.Itoa(age)+"</b>")
+	if etype == core.EventTypeBirthday {
+		if age, ok := core.AgeAt(event.CalendarType, event.Year, occurrence); ok {
+			phrase := genderPhrase(event, lang)
+			if lang == core.LanguageHe {
+				lines = append(lines, "🎈 "+phrase+" <b>"+strconv.Itoa(age)+"</b>")
+			} else {
+				lines = append(lines, "🎈 Turning <b>"+strconv.Itoa(age)+"</b>")
+			}
 		}
 	}
 

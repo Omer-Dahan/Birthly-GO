@@ -71,6 +71,23 @@ func HebrewYearKeyboard(lang string) *gotgbot.InlineKeyboardMarkup {
 	return &gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{noYear}}}
 }
 
+// SecondaryDatePromptKeyboard offers a hebrew-primary event an optional
+// second, gregorian-calendar date.
+func SecondaryDatePromptKeyboard(lang string) *gotgbot.InlineKeyboardMarkup {
+	yes := flowBtn(i18n.T("add.secondary.yes", lang, nil), "secyes")
+	no := flowBtn(i18n.T("add.secondary.no", lang, nil), "secno")
+	return &gotgbot.InlineKeyboardMarkup{
+		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{yes, no}, {CancelButton(i18n.T("common.cancel", lang, nil))}},
+	}
+}
+
+// SecondaryDateStepKeyboard is shown while waiting for the free-text
+// secondary-date message (no "no year"/"hebrew" branches — the secondary
+// date is always gregorian and never carries its own year).
+func SecondaryDateStepKeyboard(lang string) *gotgbot.InlineKeyboardMarkup {
+	return &gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{CancelButton(i18n.T("common.cancel", lang, nil))}}}
+}
+
 func SavedKeyboard(lang string, eventID int64) *gotgbot.InlineKeyboardMarkup {
 	more := flowBtn(i18n.T("add.more_details", lang, nil), "more")
 	changeReminder := cardBtn(i18n.T("add.change_reminder", lang, nil), "rem", eventID)

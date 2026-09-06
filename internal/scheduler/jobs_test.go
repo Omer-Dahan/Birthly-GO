@@ -763,3 +763,87 @@ func TestTickReminders_NegativeTimezoneWindow(t *testing.T) {
 		t.Fatalf("sendCount = %d, want 1", client.sendCount())
 	}
 }
+
+// TestTickReminders_DualDateEventFiresBothTracksIndependently covers the
+// dual hebrew/gregorian dates feature: a hebrew-primary event with a
+// gregorian secondary date must fire a separate reminder for each track on
+// its own occurrence day, and neither track's dedup should suppress the
+// other's send even though they share one global rule.
+func TestTickReminders_DualDateEventFiresBothTracksIndependently(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	users := repo.NewUserRepo(db)
+	user, _, err := users.GetOrCreate(ctx, 1, nil, "U", nil, false)
+	if err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+	user.Timezone = "Asia/Jerusalem"
+	user.DefaultNotifyTime = "09:00"
+	if err := users.UpdateSettings(ctx, user); err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+
+	primaryOcc := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	secondaryOcc := time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC)
+	secondaryCalendarType := "gregorian"
+	secMonth, secDay := 8, 10
+	events := repo.NewEventRepo(db, 1)
+	_, err = events.Create(ctx, &models.Event{
+		EventType: "birthday", FirstName: "Dana", Category: "other",
+		CalendarType: "hebrew", Month: 5, Day: 1,
+		NextOccurrence:          &primaryOcc,
+		SecondaryCalendarType:   &secondaryCalendarType,
+		SecondaryMonth:          &secMonth,
+		SecondaryDay:            &secDay,
+		SecondaryNextOccurrence: &secondaryOcc,
+		IsActive:                true,
+	})
+	if err != nil {
+		t.Fatalf("Create dual-date event: %v", err)
+	}
+
+	rules := repo.NewReminderRuleRepo(db, 1)
+	offsetZero := 0
+	sendTime := "09:00"
+	if _, err := rules.Create(ctx, &models.ReminderRule{OffsetDays: &offsetZero, SendTime: &sendTime, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &fakeBotClient{}
+	bot := testBot(client)
+	cfg := testConfig()
+	logger := testLogger()
+
+	// Primary occurrence day at 09:01 local (06:01 UTC): only the primary track fires.
+	if err := TickReminders(ctx, bot, db, cfg, time.Date(2026, 8, 1, 6, 1, 0, 0, time.UTC), logger); err != nil {
+		t.Fatalf("Tick on primary day: %v", err)
+	}
+	if client.sendCount() != 1 {
+		t.Fatalf("sendCount after primary day = %d, want 1", client.sendCount())
+	}
+
+	// Same day, later tick: must not resend the primary track.
+	if err := TickReminders(ctx, bot, db, cfg, time.Date(2026, 8, 1, 7, 0, 0, 0, time.UTC), logger); err != nil {
+		t.Fatalf("Tick later same day: %v", err)
+	}
+	if client.sendCount() != 1 {
+		t.Fatalf("sendCount after re-tick on primary day = %d, want still 1", client.sendCount())
+	}
+
+	// Secondary occurrence day at 09:01 local (06:01 UTC): the secondary
+	// track fires too, independently of the primary track's own send.
+	if err := TickReminders(ctx, bot, db, cfg, time.Date(2026, 8, 10, 6, 1, 0, 0, time.UTC), logger); err != nil {
+		t.Fatalf("Tick on secondary day: %v", err)
+	}
+	if client.sendCount() != 2 {
+		t.Fatalf("sendCount after secondary day = %d, want 2", client.sendCount())
+	}
+
+	// Same secondary day, later tick: must not resend the secondary track either.
+	if err := TickReminders(ctx, bot, db, cfg, time.Date(2026, 8, 10, 7, 0, 0, 0, time.UTC), logger); err != nil {
+		t.Fatalf("Tick later on secondary day: %v", err)
+	}
+	if client.sendCount() != 2 {
+		t.Fatalf("sendCount after re-tick on secondary day = %d, want still 2", client.sendCount())
+	}
+}

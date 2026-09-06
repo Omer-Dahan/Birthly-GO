@@ -80,7 +80,7 @@ func TestSendReminder_UsesSendPhotoWhenEventHasPhoto(t *testing.T) {
 	client := &fakeBotClient{}
 	bot := testBot(client)
 
-	if ok := SendReminder(context.Background(), bot, db, user, event, rule, 1, 2026, 20); !ok {
+	if ok := SendReminder(context.Background(), bot, db, user, event, rule, 1, *event.NextOccurrence, event.CalendarType, 20); !ok {
 		t.Fatal("SendReminder returned false, want true")
 	}
 
@@ -110,7 +110,7 @@ func TestSendReminder_UsesSendMessageWhenEventHasNoPhoto(t *testing.T) {
 	client := &fakeBotClient{}
 	bot := testBot(client)
 
-	if ok := SendReminder(context.Background(), bot, db, user, event, rule, 1, 2026, 20); !ok {
+	if ok := SendReminder(context.Background(), bot, db, user, event, rule, 1, *event.NextOccurrence, event.CalendarType, 20); !ok {
 		t.Fatal("SendReminder returned false, want true")
 	}
 

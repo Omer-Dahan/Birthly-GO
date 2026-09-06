@@ -90,6 +90,14 @@ func RenderCardText(user *models.User, event *models.Event, rules []*models.Remi
 		lines = append(lines, "📅 "+core.FormatDate(next, user.DateFormat))
 	}
 
+	if event.SecondaryMonth != nil && event.SecondaryNextOccurrence != nil {
+		secNext := *event.SecondaryNextOccurrence
+		secCountdown := core.FormatCountdown(core.DaysUntil(secNext, today))
+		lines = append(lines, i18n.T("card.secondary_date", lang, genderKwargs(event.Gender, map[string]any{
+			"date": core.FormatDate(secNext, user.DateFormat), "countdown": secCountdown,
+		})))
+	}
+
 	countdown := core.FormatCountdown(core.DaysUntil(next, today))
 	lines = append(lines, i18n.T("card.days_until", lang, genderKwargs(event.Gender, map[string]any{"countdown": countdown})))
 

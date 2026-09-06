@@ -29,11 +29,14 @@ func RegisterEventAdd(dispatcher *ext.Dispatcher) {
 	dispatcher.AddHandler(handlers.NewMessage(anyText, msgAddName))
 	dispatcher.AddHandler(handlers.NewMessage(anyText, msgAddDate))
 	dispatcher.AddHandler(handlers.NewMessage(anyText, msgAddHebrewYear))
+	dispatcher.AddHandler(handlers.NewMessage(anyText, msgAddSecondaryDate))
 
 	dispatcher.AddHandler(handlers.NewCallback(eventFlowActionFilter("noyear"), cbAddNoYear))
 	dispatcher.AddHandler(handlers.NewCallback(eventFlowActionFilter("heb"), cbAddHebrewTrack))
 	dispatcher.AddHandler(handlers.NewCallback(eventFlowActionFilter("hm"), cbAddHebrewMonth))
 	dispatcher.AddHandler(handlers.NewCallback(eventFlowActionFilter("hd"), cbAddHebrewDay))
+	dispatcher.AddHandler(handlers.NewCallback(eventFlowActionFilter("secyes"), cbAddSecondaryYes))
+	dispatcher.AddHandler(handlers.NewCallback(eventFlowActionFilter("secno"), cbAddSecondaryNo))
 }
 
 func anyText(msg *gotgbot.Message) bool { return msg.Text != "" }
@@ -120,7 +123,7 @@ func msgAddDate(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	db := router.DBFromContext(ctx)
 	maxEvents := router.ConfigFromContext(ctx).MaxEventsPerUser
-	event, limitErr, err := finalizeEvent(context.Background(), db, user, store, parsed.Month, parsed.Day, parsed.Year, core.CalendarTypeGregorian, maxEvents)
+	event, limitErr, err := finalizeEvent(context.Background(), db, user, store, parsed.Month, parsed.Day, parsed.Year, core.CalendarTypeGregorian, nil, nil, maxEvents)
 	if err != nil {
 		return err
 	}
@@ -151,24 +154,9 @@ func cbAddNoYear(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 
 	case fsm.AddEventHebYear:
-		data := store.GetData(user.ID)
-		month, _ := data["heb_month"].(int)
-		day, _ := data["heb_day"].(int)
-		db := router.DBFromContext(ctx)
-		maxEvents := router.ConfigFromContext(ctx).MaxEventsPerUser
-		event, limitErr, err := finalizeEvent(context.Background(), db, user, store, month, day, nil, core.CalendarTypeHebrew, maxEvents)
-		if err != nil {
-			return err
-		}
-		if limitErr {
-			if err := EditOrIgnore(b, ctx.CallbackQuery, i18n.T("error.limit_reached", user.Language, map[string]any{"max": maxEvents}), nil); err != nil {
-				return err
-			}
-			AnswerCallback(b, ctx.CallbackQuery, "")
-			return nil
-		}
-		text := renderSavedText(user, event)
-		if err := EditOrIgnore(b, ctx.CallbackQuery, text, keyboards.SavedKeyboard(user.Language, event.ID)); err != nil {
+		store.SetState(user.ID, fsm.AddEventSecondaryPrompt)
+		text := i18n.T("add.secondary.prompt", user.Language, nil)
+		if err := EditOrIgnore(b, ctx.CallbackQuery, text, keyboards.SecondaryDatePromptKeyboard(user.Language)); err != nil {
 			return err
 		}
 		AnswerCallback(b, ctx.CallbackQuery, "")
@@ -276,13 +264,81 @@ func msgAddHebrewYear(b *gotgbot.Bot, ctx *ext.Context) error {
 		return sendErr
 	}
 
-	data := store.GetData(user.ID)
-	month, _ := data["heb_month"].(int)
-	day, _ := data["heb_day"].(int)
+	store.UpdateData(user.ID, map[string]any{"heb_year": year})
+	store.SetState(user.ID, fsm.AddEventSecondaryPrompt)
+
+	text := i18n.T("add.secondary.prompt", user.Language, nil)
+	_, sendErr := ctx.EffectiveMessage.Reply(b, text, &gotgbot.SendMessageOpts{ReplyMarkup: keyboards.SecondaryDatePromptKeyboard(user.Language)})
+	return sendErr
+}
+
+// cbAddSecondaryYes handles "yes, add a Gregorian date too" from the
+// secondary-date prompt shown after a hebrew-primary date is collected.
+func cbAddSecondaryYes(b *gotgbot.Bot, ctx *ext.Context) error {
+	user := User(ctx)
+	store := router.FSMFromContext(ctx)
+	if state, ok := store.GetState(user.ID); !ok || state != fsm.AddEventSecondaryPrompt {
+		return ext.ContinueGroups
+	}
+
+	store.SetState(user.ID, fsm.AddEventSecondaryDate)
+	text := i18n.T("add.secondary.date_title", user.Language, nil) + "\n\n" + i18n.T("add.secondary.date_hint", user.Language, nil)
+	if err := EditOrIgnore(b, ctx.CallbackQuery, text, keyboards.SecondaryDateStepKeyboard(user.Language)); err != nil {
+		return err
+	}
+	AnswerCallback(b, ctx.CallbackQuery, "")
+	return nil
+}
+
+// cbAddSecondaryNo handles "no thanks" from the secondary-date prompt:
+// finalizes the event with only its hebrew primary date.
+func cbAddSecondaryNo(b *gotgbot.Bot, ctx *ext.Context) error {
+	user := User(ctx)
+	store := router.FSMFromContext(ctx)
+	if state, ok := store.GetState(user.ID); !ok || state != fsm.AddEventSecondaryPrompt {
+		return ext.ContinueGroups
+	}
 
 	db := router.DBFromContext(ctx)
 	maxEvents := router.ConfigFromContext(ctx).MaxEventsPerUser
-	event, limitErr, err := finalizeEvent(context.Background(), db, user, store, month, day, &year, core.CalendarTypeHebrew, maxEvents)
+	event, limitErr, err := finalizeSecondaryFlow(context.Background(), db, user, store, maxEvents, nil, nil)
+	if err != nil {
+		return err
+	}
+	if limitErr {
+		if err := EditOrIgnore(b, ctx.CallbackQuery, i18n.T("error.limit_reached", user.Language, map[string]any{"max": maxEvents}), nil); err != nil {
+			return err
+		}
+		AnswerCallback(b, ctx.CallbackQuery, "")
+		return nil
+	}
+	text := renderSavedText(user, event)
+	if err := EditOrIgnore(b, ctx.CallbackQuery, text, keyboards.SavedKeyboard(user.Language, event.ID)); err != nil {
+		return err
+	}
+	AnswerCallback(b, ctx.CallbackQuery, "")
+	return nil
+}
+
+// msgAddSecondaryDate reads the free-text Gregorian date for a hebrew-primary
+// event's secondary track, then finalizes the event with both dates.
+func msgAddSecondaryDate(b *gotgbot.Bot, ctx *ext.Context) error {
+	user := User(ctx)
+	store := router.FSMFromContext(ctx)
+	if state, ok := store.GetState(user.ID); !ok || state != fsm.AddEventSecondaryDate {
+		return ext.ContinueGroups
+	}
+
+	parsed, err := core.ParseGregorian(ctx.EffectiveMessage.Text, timeNow())
+	if err != nil {
+		_, sendErr := ctx.EffectiveMessage.Reply(b, err.Error(), nil)
+		return sendErr
+	}
+
+	db := router.DBFromContext(ctx)
+	maxEvents := router.ConfigFromContext(ctx).MaxEventsPerUser
+	month, day := parsed.Month, parsed.Day
+	event, limitErr, err := finalizeSecondaryFlow(context.Background(), db, user, store, maxEvents, &month, &day)
 	if err != nil {
 		return err
 	}
@@ -295,10 +351,24 @@ func msgAddHebrewYear(b *gotgbot.Bot, ctx *ext.Context) error {
 	return sendErr
 }
 
+// finalizeSecondaryFlow reads the hebrew month/day/year accumulated earlier
+// in the flow back out of FSM data and finalizes the event, optionally with
+// a secondary gregorian date.
+func finalizeSecondaryFlow(ctx context.Context, db repo.DBTX, user *models.User, store *fsm.Store, maxEventsPerUser int, secondaryMonth, secondaryDay *int) (*models.Event, bool, error) {
+	data := store.GetData(user.ID)
+	month, _ := data["heb_month"].(int)
+	day, _ := data["heb_day"].(int)
+	var year *int
+	if y, ok := data["heb_year"].(int); ok {
+		year = &y
+	}
+	return finalizeEvent(ctx, db, user, store, month, day, year, core.CalendarTypeHebrew, secondaryMonth, secondaryDay, maxEventsPerUser)
+}
+
 // finalizeEvent creates the event and clears FSM state. limitErr is true if
 // the user's event limit was reached (caller renders the limit-reached
 // message) — port of event_add.py's _finalize_event.
-func finalizeEvent(ctx context.Context, db repo.DBTX, user *models.User, store *fsm.Store, month, day int, year *int, calendarType string, maxEventsPerUser int) (*models.Event, bool, error) {
+func finalizeEvent(ctx context.Context, db repo.DBTX, user *models.User, store *fsm.Store, month, day int, year *int, calendarType string, secondaryMonth, secondaryDay *int, maxEventsPerUser int) (*models.Event, bool, error) {
 	data := store.GetData(user.ID)
 	firstName, _ := data["first_name"].(string)
 	var lastName *string
@@ -315,6 +385,7 @@ func finalizeEvent(ctx context.Context, db repo.DBTX, user *models.User, store *
 	event, err := services.CreateMinimalEvent(ctx, db, user, services.NewEventInput{
 		FirstName: firstName, LastName: lastName, Month: month, Day: day, Year: year,
 		CalendarType: calendarType, Gender: genderPtr,
+		SecondaryMonth: secondaryMonth, SecondaryDay: secondaryDay,
 	}, maxEventsPerUser)
 	if err != nil {
 		if _, ok := err.(*services.LimitErr); ok {
@@ -356,6 +427,14 @@ func renderSavedText(user *models.User, event *models.Event) string {
 		lines = append(lines, "📅 "+core.FormatDate(next, user.DateFormat)+"  ("+hebStr+")")
 	} else {
 		lines = append(lines, "📅 "+core.FormatDate(next, user.DateFormat))
+	}
+
+	if event.SecondaryMonth != nil && event.SecondaryNextOccurrence != nil {
+		secNext := *event.SecondaryNextOccurrence
+		secCountdown := core.FormatCountdown(core.DaysUntil(secNext, services.UserToday(user)))
+		lines = append(lines, i18n.T("card.secondary_date", lang, mergeKwargs(map[string]any{
+			"date": core.FormatDate(secNext, user.DateFormat), "countdown": secCountdown,
+		}, kw)))
 	}
 
 	countdown := core.FormatCountdown(core.DaysUntil(next, services.UserToday(user)))

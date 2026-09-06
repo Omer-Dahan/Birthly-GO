@@ -121,8 +121,11 @@ func (r *NotificationRepo) ListActiveUsersWithEvents(ctx context.Context, window
 		 JOIN events e ON e.user_id = u.id
 		 WHERE u.notifications_enabled = 1 AND u.is_blocked = 0 AND u.bot_blocked_by_user = 0
 		   AND e.deleted_at IS NULL AND e.is_active = 1
-		   AND e.next_occurrence IS NOT NULL AND e.next_occurrence >= ? AND e.next_occurrence <= ?`,
-		formatDate(windowStart), formatDate(windowEnd),
+		   AND (
+		     (e.next_occurrence IS NOT NULL AND e.next_occurrence >= ? AND e.next_occurrence <= ?)
+		     OR (e.secondary_next_occurrence IS NOT NULL AND e.secondary_next_occurrence >= ? AND e.secondary_next_occurrence <= ?)
+		   )`,
+		formatDate(windowStart), formatDate(windowEnd), formatDate(windowStart), formatDate(windowEnd),
 	)
 	if err != nil {
 		return nil, err
@@ -144,8 +147,11 @@ func (r *NotificationRepo) GetActiveEventsForUser(ctx context.Context, userID in
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT `+eventColumns+` FROM events
 		 WHERE user_id = ? AND deleted_at IS NULL AND is_active = 1
-		   AND next_occurrence IS NOT NULL AND next_occurrence >= ? AND next_occurrence <= ?`,
-		userID, formatDate(windowStart), formatDate(windowEnd),
+		   AND (
+		     (next_occurrence IS NOT NULL AND next_occurrence >= ? AND next_occurrence <= ?)
+		     OR (secondary_next_occurrence IS NOT NULL AND secondary_next_occurrence >= ? AND secondary_next_occurrence <= ?)
+		   )`,
+		userID, formatDate(windowStart), formatDate(windowEnd), formatDate(windowStart), formatDate(windowEnd),
 	)
 	if err != nil {
 		return nil, err

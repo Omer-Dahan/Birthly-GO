@@ -54,10 +54,19 @@ type Event struct {
 	PhotoFileID      *string
 	Notes            *string
 	NextOccurrence   *time.Time
-	IsActive         bool
-	DeletedAt        *time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// Secondary date: an optional second calendar track on the same event
+	// (SPEC "dual hebrew/gregorian dates" feature). Only ever populated when
+	// CalendarType is hebrew — the reverse direction (gregorian primary +
+	// hebrew secondary) is not offered by the add flow. SecondaryCalendarType
+	// is always "gregorian" when set.
+	SecondaryCalendarType   *string
+	SecondaryMonth          *int
+	SecondaryDay            *int
+	SecondaryNextOccurrence *time.Time
+	IsActive                bool
+	DeletedAt               *time.Time
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
 }
 
 type ReminderRule struct {

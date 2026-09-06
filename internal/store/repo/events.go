@@ -24,6 +24,7 @@ func NewEventRepo(db DBTX, userID int64) *EventRepo {
 const eventColumns = `id, user_id, event_type, custom_type_label, first_name, last_name,
 	nickname, gender, relation, category, calendar_type, year, month, day,
 	event_time, phone, telegram_username, photo_file_id, notes, next_occurrence,
+	secondary_calendar_type, secondary_month, secondary_day, secondary_next_occurrence,
 	is_active, deleted_at, created_at, updated_at`
 
 func scanEvent(row interface{ Scan(...any) error }) (*models.Event, error) {
@@ -32,6 +33,7 @@ func scanEvent(row interface{ Scan(...any) error }) (*models.Event, error) {
 		&e.ID, &e.UserID, &e.EventType, &e.CustomTypeLabel, &e.FirstName, &e.LastName,
 		&e.Nickname, &e.Gender, &e.Relation, &e.Category, &e.CalendarType, &e.Year, &e.Month, &e.Day,
 		&e.EventTime, &e.Phone, &e.TelegramUsername, &e.PhotoFileID, &e.Notes, &e.NextOccurrence,
+		&e.SecondaryCalendarType, &e.SecondaryMonth, &e.SecondaryDay, &e.SecondaryNextOccurrence,
 		&e.IsActive, &e.DeletedAt, &e.CreatedAt, &e.UpdatedAt,
 	)
 	if err != nil {
@@ -203,11 +205,13 @@ func (r *EventRepo) Create(ctx context.Context, e *models.Event) (*models.Event,
 	res, err := r.db.ExecContext(ctx,
 		`INSERT INTO events (user_id, event_type, custom_type_label, first_name, last_name,
 			nickname, gender, relation, category, calendar_type, year, month, day,
-			event_time, phone, telegram_username, photo_file_id, notes, next_occurrence, is_active)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			event_time, phone, telegram_username, photo_file_id, notes, next_occurrence,
+			secondary_calendar_type, secondary_month, secondary_day, secondary_next_occurrence, is_active)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.userID, e.EventType, e.CustomTypeLabel, e.FirstName, e.LastName,
 		e.Nickname, e.Gender, e.Relation, e.Category, e.CalendarType, e.Year, e.Month, e.Day,
-		e.EventTime, e.Phone, e.TelegramUsername, e.PhotoFileID, e.Notes, formatDatePtr(e.NextOccurrence), e.IsActive,
+		e.EventTime, e.Phone, e.TelegramUsername, e.PhotoFileID, e.Notes, formatDatePtr(e.NextOccurrence),
+		e.SecondaryCalendarType, e.SecondaryMonth, e.SecondaryDay, formatDatePtr(e.SecondaryNextOccurrence), e.IsActive,
 	)
 	if err != nil {
 		return nil, err
@@ -226,11 +230,13 @@ func (r *EventRepo) Update(ctx context.Context, e *models.Event) (*models.Event,
 		`UPDATE events SET event_type=?, custom_type_label=?, first_name=?, last_name=?,
 			nickname=?, gender=?, relation=?, category=?, calendar_type=?, year=?, month=?, day=?,
 			event_time=?, phone=?, telegram_username=?, photo_file_id=?, notes=?, next_occurrence=?,
+			secondary_calendar_type=?, secondary_month=?, secondary_day=?, secondary_next_occurrence=?,
 			is_active=?, updated_at=?
 		 WHERE id = ? AND user_id = ?`,
 		e.EventType, e.CustomTypeLabel, e.FirstName, e.LastName,
 		e.Nickname, e.Gender, e.Relation, e.Category, e.CalendarType, e.Year, e.Month, e.Day,
 		e.EventTime, e.Phone, e.TelegramUsername, e.PhotoFileID, e.Notes, formatDatePtr(e.NextOccurrence),
+		e.SecondaryCalendarType, e.SecondaryMonth, e.SecondaryDay, formatDatePtr(e.SecondaryNextOccurrence),
 		e.IsActive, formatDateTime(time.Now()),
 		e.ID, r.userID,
 	)

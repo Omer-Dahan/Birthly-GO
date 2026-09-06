@@ -103,6 +103,66 @@ func TestUserAndEventLifecycle(t *testing.T) {
 	}
 }
 
+// TestEventSecondaryDateRoundTrip covers the dual hebrew/gregorian dates
+// feature at the repo layer: the secondary_* columns must survive a
+// Create/GetOwned/Update round trip, including clearing them back to NULL.
+func TestEventSecondaryDateRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+
+	users := NewUserRepo(db)
+	user, _, err := users.GetOrCreate(ctx, 5001, nil, "Dana", nil, false)
+	if err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+
+	events := NewEventRepo(db, user.ID)
+	secondaryCalendarType := "gregorian"
+	secondaryOcc := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
+	secMonth, secDay := 3, 15
+	created, err := events.Create(ctx, &models.Event{
+		EventType: "birthday", FirstName: "Dana", Category: "other",
+		CalendarType: "hebrew", Month: 7, Day: 1, IsActive: true,
+		SecondaryCalendarType:   &secondaryCalendarType,
+		SecondaryMonth:          &secMonth,
+		SecondaryDay:            &secDay,
+		SecondaryNextOccurrence: &secondaryOcc,
+	})
+	if err != nil {
+		t.Fatalf("Create event with secondary date: %v", err)
+	}
+
+	fetched, err := events.GetOwned(ctx, created.ID)
+	if err != nil || fetched == nil {
+		t.Fatalf("GetOwned: fetched=%v err=%v", fetched, err)
+	}
+	if fetched.SecondaryCalendarType == nil || *fetched.SecondaryCalendarType != "gregorian" {
+		t.Errorf("SecondaryCalendarType = %v, want gregorian", fetched.SecondaryCalendarType)
+	}
+	if fetched.SecondaryMonth == nil || *fetched.SecondaryMonth != 3 {
+		t.Errorf("SecondaryMonth = %v, want 3", fetched.SecondaryMonth)
+	}
+	if fetched.SecondaryDay == nil || *fetched.SecondaryDay != 15 {
+		t.Errorf("SecondaryDay = %v, want 15", fetched.SecondaryDay)
+	}
+	if fetched.SecondaryNextOccurrence == nil || !fetched.SecondaryNextOccurrence.Equal(secondaryOcc) {
+		t.Errorf("SecondaryNextOccurrence = %v, want %v", fetched.SecondaryNextOccurrence, secondaryOcc)
+	}
+
+	// Clearing the secondary date back to NULL must persist too.
+	fetched.SecondaryCalendarType = nil
+	fetched.SecondaryMonth = nil
+	fetched.SecondaryDay = nil
+	fetched.SecondaryNextOccurrence = nil
+	updated, err := events.Update(ctx, fetched)
+	if err != nil {
+		t.Fatalf("Update clearing secondary date: %v", err)
+	}
+	if updated.SecondaryMonth != nil || updated.SecondaryNextOccurrence != nil {
+		t.Errorf("secondary date not cleared: month=%v occurrence=%v", updated.SecondaryMonth, updated.SecondaryNextOccurrence)
+	}
+}
+
 func TestReminderRuleUnusedOffsetConstraint(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)

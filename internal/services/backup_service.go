@@ -34,7 +34,7 @@ const exportSchemaVersion = 1
 var csvHeaders = []string{
 	"שם פרטי", "שם משפחה", "כינוי", "תאריך (יום)", "תאריך (חודש)", "תאריך (שנה)",
 	"לוח", "סוג אירוע", "קטגוריה", "קשר", "מין", "טלפון", "טלגרם", "הערות",
-	"שעת אירוע", "פעיל",
+	"שעת אירוע", "פעיל", "תאריך משני (יום)", "תאריך משני (חודש)", "לוח משני",
 }
 
 type exportPayload struct {
@@ -60,23 +60,29 @@ type exportUser struct {
 }
 
 type exportEvent struct {
-	FirstName        string  `json:"first_name"`
-	LastName         *string `json:"last_name"`
-	Nickname         *string `json:"nickname"`
-	Month            int     `json:"month"`
-	Day              int     `json:"day"`
-	Year             *int    `json:"year"`
-	CalendarType     string  `json:"calendar_type"`
-	EventType        string  `json:"event_type"`
-	CustomTypeLabel  *string `json:"custom_type_label"`
-	Category         string  `json:"category"`
-	Gender           *string `json:"gender"`
-	Relation         *string `json:"relation"`
-	Phone            *string `json:"phone"`
-	TelegramUsername *string `json:"telegram_username"`
-	Notes            *string `json:"notes"`
-	EventTime        *string `json:"event_time"`
-	IsActive         bool    `json:"is_active"`
+	FirstName    string  `json:"first_name"`
+	LastName     *string `json:"last_name"`
+	Nickname     *string `json:"nickname"`
+	Month        int     `json:"month"`
+	Day          int     `json:"day"`
+	Year         *int    `json:"year"`
+	CalendarType string  `json:"calendar_type"`
+	// Secondary date: an optional second calendar track (SPEC "dual
+	// hebrew/gregorian dates" feature). Omitted when the event has no
+	// secondary date, matching every other optional field in this struct.
+	SecondaryCalendarType *string `json:"secondary_calendar_type,omitempty"`
+	SecondaryMonth        *int    `json:"secondary_month,omitempty"`
+	SecondaryDay          *int    `json:"secondary_day,omitempty"`
+	EventType             string  `json:"event_type"`
+	CustomTypeLabel       *string `json:"custom_type_label"`
+	Category              string  `json:"category"`
+	Gender                *string `json:"gender"`
+	Relation              *string `json:"relation"`
+	Phone                 *string `json:"phone"`
+	TelegramUsername      *string `json:"telegram_username"`
+	Notes                 *string `json:"notes"`
+	EventTime             *string `json:"event_time"`
+	IsActive              bool    `json:"is_active"`
 	// photo_file_id intentionally omitted (SPEC §23)
 	ReminderRules []exportRule `json:"reminder_rules"`
 }
@@ -100,6 +106,7 @@ func eventToExport(e *models.Event) exportEvent {
 	return exportEvent{
 		FirstName: e.FirstName, LastName: e.LastName, Nickname: e.Nickname,
 		Month: e.Month, Day: e.Day, Year: e.Year, CalendarType: e.CalendarType,
+		SecondaryCalendarType: e.SecondaryCalendarType, SecondaryMonth: e.SecondaryMonth, SecondaryDay: e.SecondaryDay,
 		EventType: e.EventType, CustomTypeLabel: e.CustomTypeLabel, Category: e.Category,
 		Gender: e.Gender, Relation: e.Relation, Phone: e.Phone,
 		TelegramUsername: e.TelegramUsername, Notes: e.Notes, EventTime: e.EventTime,
@@ -189,12 +196,21 @@ func eventCSVRow(e *models.Event) []string {
 	if e.Year != nil {
 		year = strconv.Itoa(*e.Year)
 	}
+	secDay, secMonth, secCalendarLabel := "", "", ""
+	if e.SecondaryMonth != nil && e.SecondaryDay != nil {
+		secDay = strconv.Itoa(*e.SecondaryDay)
+		secMonth = strconv.Itoa(*e.SecondaryMonth)
+		secCalendarLabel = "לועזי"
+		if e.SecondaryCalendarType != nil && *e.SecondaryCalendarType == core.CalendarTypeHebrew {
+			secCalendarLabel = "עברי"
+		}
+	}
 	return []string{
 		e.FirstName, deref(e.LastName), deref(e.Nickname),
 		strconv.Itoa(e.Day), strconv.Itoa(e.Month), year,
 		calendarLabel, e.EventType, e.Category, deref(e.Relation), deref(e.Gender),
 		deref(e.Phone), deref(e.TelegramUsername), deref(e.Notes), deref(e.EventTime),
-		activeLabel,
+		activeLabel, secDay, secMonth, secCalendarLabel,
 	}
 }
 
@@ -486,6 +502,36 @@ func dictToEvent(raw map[string]any, today time.Time, user *models.User) (*model
 		return nil, err
 	}
 
+	// Secondary date: only honored when the primary is hebrew, matching the
+	// one-directional invariant the add flow enforces (see NewEventInput).
+	// Silently ignored otherwise rather than erroring the whole row, since a
+	// stray secondary_month/day on a gregorian row is harmless to drop.
+	var secondaryCalendarType *string
+	var secondaryMonth, secondaryDay *int
+	var secondaryOcc *time.Time
+	if calendarType == core.CalendarTypeHebrew && raw["secondary_month"] != nil && raw["secondary_day"] != nil {
+		sm, err := intField(raw, "secondary_month")
+		if err != nil {
+			return nil, fmt.Errorf("invalid secondary_month: %w", err)
+		}
+		sd, err := intField(raw, "secondary_day")
+		if err != nil {
+			return nil, fmt.Errorf("invalid secondary_day: %w", err)
+		}
+		if sm < 1 || sm > 12 {
+			return nil, fmt.Errorf("invalid secondary_month: %d", sm)
+		}
+		if sd < 1 || sd > 31 {
+			return nil, fmt.Errorf("invalid secondary_day: %d", sd)
+		}
+		ct := core.CalendarTypeGregorian
+		secOcc, err := core.NextOccurrence(ct, sm, sd, today, user.AdarPolicy, user.Feb29Policy)
+		if err != nil {
+			return nil, err
+		}
+		secondaryCalendarType, secondaryMonth, secondaryDay, secondaryOcc = &ct, &sm, &sd, &secOcc
+	}
+
 	return &models.Event{
 		FirstName: firstName, LastName: optStringField(raw, "last_name"),
 		Nickname: optStringField(raw, "nickname"), Month: month, Day: day, Year: year,
@@ -495,6 +541,8 @@ func dictToEvent(raw map[string]any, today time.Time, user *models.User) (*model
 		Phone: optStringField(raw, "phone"), TelegramUsername: optStringField(raw, "telegram_username"),
 		Notes: optStringField(raw, "notes"), EventTime: optStringField(raw, "event_time"),
 		IsActive: boolFieldDefault(raw, "is_active", true), NextOccurrence: &occ,
+		SecondaryCalendarType: secondaryCalendarType, SecondaryMonth: secondaryMonth, SecondaryDay: secondaryDay,
+		SecondaryNextOccurrence: secondaryOcc,
 	}, nil
 }
 

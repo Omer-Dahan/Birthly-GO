@@ -106,10 +106,10 @@ func sendLimiter(ratePerSecond int) *sendRateLimiter {
 // has a photo attached, it's sent via SendPhoto with the reminder text as
 // caption instead of a plain SendMessage — the Python original never sends
 // event.photo_file_id anywhere, so this is new behavior, not a parity port.
-func SendReminder(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, user *models.User, event *models.Event, rule *models.ReminderRule, logID int64, occurrenceYear, broadcastRatePerSec int) bool {
+func SendReminder(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, user *models.User, event *models.Event, rule *models.ReminderRule, logID int64, occurrence time.Time, trackCalendarType string, broadcastRatePerSec int) bool {
 	notifRepo := repo.NewNotificationRepo(db)
 
-	text := services.RenderReminder(user, event, rule, occurrenceYear)
+	text := services.RenderReminder(user, event, rule, occurrence, trackCalendarType)
 	kb := ReminderKeyboard(event.ID, user.Language)
 	limiter := sendLimiter(broadcastRatePerSec)
 

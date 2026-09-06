@@ -39,6 +39,11 @@ const (
 	AddEventHebMonth State = "add_event:heb_month"
 	AddEventHebDay   State = "add_event:heb_day"
 	AddEventHebYear  State = "add_event:heb_year"
+	// AddEventSecondaryPrompt/Date offer a hebrew-primary event a second,
+	// gregorian-calendar recurring date (SPEC "dual hebrew/gregorian dates"
+	// feature). Never entered from the gregorian-primary branch.
+	AddEventSecondaryPrompt State = "add_event:secondary_prompt"
+	AddEventSecondaryDate   State = "add_event:secondary_date"
 )
 
 // EditEvent flow.

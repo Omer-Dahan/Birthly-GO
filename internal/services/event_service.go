@@ -19,6 +19,12 @@ type NewEventInput struct {
 	Year         *int
 	CalendarType string // defaults to core.CalendarTypeGregorian if empty
 	Gender       *string
+	// SecondaryMonth/SecondaryDay add a second, gregorian-calendar recurring
+	// date to the same event (SPEC "dual dates" feature). Only honored when
+	// CalendarType is hebrew — ignored otherwise, since the add flow never
+	// offers the reverse direction.
+	SecondaryMonth *int
+	SecondaryDay   *int
 }
 
 // CreateMinimalEvent creates an event with only the fields the simplicity
@@ -49,6 +55,12 @@ func CreateMinimalEvent(ctx context.Context, db repo.DBTX, user *models.User, in
 		Day:          in.Day,
 		Gender:       in.Gender,
 		IsActive:     true,
+	}
+	if in.SecondaryMonth != nil && in.SecondaryDay != nil && calendarType == core.CalendarTypeHebrew {
+		secondaryCalendarType := core.CalendarTypeGregorian
+		event.SecondaryCalendarType = &secondaryCalendarType
+		event.SecondaryMonth = in.SecondaryMonth
+		event.SecondaryDay = in.SecondaryDay
 	}
 	if err := recomputeOccurrence(event, user); err != nil {
 		return nil, err
@@ -136,5 +148,22 @@ func recomputeOccurrence(event *models.Event, user *models.User) error {
 		return err
 	}
 	event.NextOccurrence = &occ
+
+	if event.SecondaryMonth == nil || event.SecondaryDay == nil {
+		event.SecondaryNextOccurrence = nil
+		return nil
+	}
+	secondaryCalendarType := core.CalendarTypeGregorian
+	if event.SecondaryCalendarType != nil {
+		secondaryCalendarType = *event.SecondaryCalendarType
+	}
+	secOcc, err := core.NextOccurrence(
+		secondaryCalendarType, *event.SecondaryMonth, *event.SecondaryDay, UserToday(user),
+		user.AdarPolicy, user.Feb29Policy,
+	)
+	if err != nil {
+		return err
+	}
+	event.SecondaryNextOccurrence = &secOcc
 	return nil
 }

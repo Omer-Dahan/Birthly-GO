@@ -36,16 +36,57 @@ func parseHHMM(s string) (int, int, error) {
 }
 
 type sendTask struct {
-	user           *models.User
-	event          *models.Event
-	rule           *models.ReminderRule
-	logID          int64
-	occurrenceYear int
+	user              *models.User
+	event             *models.Event
+	rule              *models.ReminderRule
+	logID             int64
+	occurrence        time.Time
+	trackCalendarType string
 }
 
 type fireKey struct {
 	eventID         int64
+	calendarType    string
 	y, mo, d, h, mi int
+}
+
+// occurrenceTrack is one of an event's one or two recurring calendar
+// tracks: the primary date always, plus an optional secondary date (SPEC
+// "dual hebrew/gregorian dates" feature).
+type occurrenceTrack struct {
+	calendarType string
+	occurrence   *time.Time
+}
+
+// eventTracks returns the tracks TickReminders must fire reminders against.
+func eventTracks(event *models.Event) []occurrenceTrack {
+	tracks := []occurrenceTrack{{calendarType: event.CalendarType, occurrence: event.NextOccurrence}}
+	if event.SecondaryMonth != nil && event.SecondaryDay != nil && event.SecondaryNextOccurrence != nil {
+		tracks = append(tracks, occurrenceTrack{
+			calendarType: secondaryCalendarType(event),
+			occurrence:   event.SecondaryNextOccurrence,
+		})
+	}
+	return tracks
+}
+
+func secondaryCalendarType(event *models.Event) string {
+	if event.SecondaryCalendarType != nil {
+		return *event.SecondaryCalendarType
+	}
+	return core.CalendarTypeGregorian
+}
+
+// resolveTrackCalendarType infers which calendar track a recovered pending
+// log belongs to by matching its stored occurrence_date against the event's
+// current secondary_next_occurrence. Falls back to the primary calendar type
+// (including for the rare case where recovery races a recompute and neither
+// track's current occurrence matches the log's date anymore).
+func resolveTrackCalendarType(event *models.Event, occurrenceDate time.Time) string {
+	if event.SecondaryNextOccurrence != nil && event.SecondaryNextOccurrence.Equal(occurrenceDate) {
+		return secondaryCalendarType(event)
+	}
+	return event.CalendarType
 }
 
 // RecoverPending processes pending logs in notifications_log whose scheduled_at
@@ -95,7 +136,7 @@ func RecoverPending(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *conf
 			rule, _ = ruleRepo.GetOwned(ctx, *log.RuleID)
 		}
 
-		SendReminder(ctx, bot, db, user, event, rule, log.ID, log.OccurrenceDate.Year(), cfg.BroadcastRatePerSec)
+		SendReminder(ctx, bot, db, user, event, rule, log.ID, log.OccurrenceDate, resolveTrackCalendarType(event, log.OccurrenceDate), cfg.BroadcastRatePerSec)
 	}
 	return nil
 }
@@ -163,11 +204,6 @@ func TickReminders(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *confi
 		}
 
 		for _, event := range events {
-			occ := event.NextOccurrence
-			if occ == nil {
-				continue
-			}
-
 			eventSpecific := perEventRules[event.ID]
 			overriddenOffsets := map[int]bool{}
 			for _, r := range eventSpecific {
@@ -182,79 +218,89 @@ func TickReminders(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *confi
 				}
 			}
 
-			seenFireMinutes := map[fireKey]bool{}
-
-			for _, rule := range applicableRules {
-				var fireLocal time.Time
-				switch {
-				case rule.OffsetDays != nil:
-					sendTimeStr := user.DefaultNotifyTime
-					if rule.SendTime != nil {
-						sendTimeStr = *rule.SendTime
-					}
-					sh, sm, err := parseHHMM(sendTimeStr)
-					if err != nil {
-						logger.Warn("tick_reminders: bad send_time", "user_id", user.ID, "value", sendTimeStr)
-						continue
-					}
-					fireDate := occ.AddDate(0, 0, -*rule.OffsetDays)
-					fireLocal = time.Date(fireDate.Year(), fireDate.Month(), fireDate.Day(), sh, sm, 0, 0, loc)
-
-				case rule.OffsetMinutes != nil:
-					if event.EventTime == nil || *event.EventTime == "" {
-						continue // only meaningful when event has a time
-					}
-					eh, em, err := parseHHMM(*event.EventTime)
-					if err != nil {
-						continue
-					}
-					eventLocal := time.Date(occ.Year(), occ.Month(), occ.Day(), eh, em, 0, 0, loc)
-					fireLocal = eventLocal.Add(-time.Duration(*rule.OffsetMinutes) * time.Minute)
-
-				default:
+			for _, track := range eventTracks(event) {
+				occ := track.occurrence
+				if occ == nil {
 					continue
 				}
 
-				fireUTC := fireLocal.UTC()
+				seenFireMinutes := map[fireKey]bool{}
 
-				if fireUTC.After(nowUTC) {
-					continue // not yet
-				}
+				for _, rule := range applicableRules {
+					var fireLocal time.Time
+					switch {
+					case rule.OffsetDays != nil:
+						sendTimeStr := user.DefaultNotifyTime
+						if rule.SendTime != nil {
+							sendTimeStr = *rule.SendTime
+						}
+						sh, sm, err := parseHHMM(sendTimeStr)
+						if err != nil {
+							logger.Warn("tick_reminders: bad send_time", "user_id", user.ID, "value", sendTimeStr)
+							continue
+						}
+						fireDate := occ.AddDate(0, 0, -*rule.OffsetDays)
+						fireLocal = time.Date(fireDate.Year(), fireDate.Month(), fireDate.Day(), sh, sm, 0, 0, loc)
 
-				if nowUTC.Sub(fireUTC) > grace {
+					case rule.OffsetMinutes != nil:
+						if event.EventTime == nil || *event.EventTime == "" {
+							continue // only meaningful when event has a time
+						}
+						eh, em, err := parseHHMM(*event.EventTime)
+						if err != nil {
+							continue
+						}
+						eventLocal := time.Date(occ.Year(), occ.Month(), occ.Day(), eh, em, 0, 0, loc)
+						fireLocal = eventLocal.Add(-time.Duration(*rule.OffsetMinutes) * time.Minute)
+
+					default:
+						continue
+					}
+
+					fireUTC := fireLocal.UTC()
+
+					if fireUTC.After(nowUTC) {
+						continue // not yet
+					}
+
+					if nowUTC.Sub(fireUTC) > grace {
+						log, err := notifRepo.CreatePending(ctx, user.ID, event.ID, &rule.ID, *occ, fireUTC)
+						if err != nil {
+							return fmt.Errorf("tick_reminders: create_pending (grace-skip): %w", err)
+						}
+						if log != nil {
+							_ = notifRepo.MarkSkipped(ctx, log.ID)
+							logger.Warn("reminder_skipped_grace", "user_id", user.ID, "event_id", event.ID, "fire_utc", fireUTC)
+						}
+						continue
+					}
+
+					fk := fireKey{event.ID, track.calendarType, fireUTC.Year(), int(fireUTC.Month()), fireUTC.Day(), fireUTC.Hour(), fireUTC.Minute()}
+					if seenFireMinutes[fk] {
+						continue
+					}
+					seenFireMinutes[fk] = true
+
 					log, err := notifRepo.CreatePending(ctx, user.ID, event.ID, &rule.ID, *occ, fireUTC)
 					if err != nil {
-						return fmt.Errorf("tick_reminders: create_pending (grace-skip): %w", err)
+						return fmt.Errorf("tick_reminders: create_pending: %w", err)
 					}
-					if log != nil {
-						_ = notifRepo.MarkSkipped(ctx, log.ID)
-						logger.Warn("reminder_skipped_grace", "user_id", user.ID, "event_id", event.ID, "fire_utc", fireUTC)
+					if log == nil {
+						logger.Debug("reminder_already_logged", "user_id", user.ID, "event_id", event.ID)
+						continue
 					}
-					continue
-				}
 
-				fk := fireKey{event.ID, fireUTC.Year(), int(fireUTC.Month()), fireUTC.Day(), fireUTC.Hour(), fireUTC.Minute()}
-				if seenFireMinutes[fk] {
-					continue
+					sendTasks = append(sendTasks, sendTask{user, event, rule, log.ID, *occ, track.calendarType})
 				}
-				seenFireMinutes[fk] = true
-
-				log, err := notifRepo.CreatePending(ctx, user.ID, event.ID, &rule.ID, *occ, fireUTC)
-				if err != nil {
-					return fmt.Errorf("tick_reminders: create_pending: %w", err)
-				}
-				if log == nil {
-					logger.Debug("reminder_already_logged", "user_id", user.ID, "event_id", event.ID)
-					continue
-				}
-
-				sendTasks = append(sendTasks, sendTask{user, event, rule, log.ID, occ.Year()})
 			}
 		}
 
-		// Advance next_occurrence for events that are strictly in the past (before todayLocal).
+		// Advance next_occurrence (and secondary_next_occurrence) for events
+		// whose track is strictly in the past (before todayLocal).
 		events2 := repo.NewEventRepo(db, user.ID)
 		for _, event := range events {
+			changed := false
+
 			if event.NextOccurrence == nil || event.NextOccurrence.Before(todayLocal) {
 				newOcc, err := core.NextOccurrence(
 					event.CalendarType, event.Month, event.Day,
@@ -263,20 +309,37 @@ func TickReminders(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *confi
 				)
 				if err != nil {
 					logger.Error("tick_reminders: recompute occurrence failed", "event_id", event.ID, "error", err)
-					continue
-				}
-				if event.NextOccurrence == nil || !event.NextOccurrence.Equal(newOcc) {
+				} else if event.NextOccurrence == nil || !event.NextOccurrence.Equal(newOcc) {
 					event.NextOccurrence = &newOcc
-					if _, err := events2.Update(ctx, event); err != nil {
-						return fmt.Errorf("tick_reminders: update recomputed occurrence: %w", err)
-					}
+					changed = true
+				}
+			}
+
+			if event.SecondaryMonth != nil && event.SecondaryDay != nil &&
+				(event.SecondaryNextOccurrence == nil || event.SecondaryNextOccurrence.Before(todayLocal)) {
+				newSecOcc, err := core.NextOccurrence(
+					secondaryCalendarType(event), *event.SecondaryMonth, *event.SecondaryDay,
+					todayLocal,
+					user.AdarPolicy, user.Feb29Policy,
+				)
+				if err != nil {
+					logger.Error("tick_reminders: recompute secondary occurrence failed", "event_id", event.ID, "error", err)
+				} else if event.SecondaryNextOccurrence == nil || !event.SecondaryNextOccurrence.Equal(newSecOcc) {
+					event.SecondaryNextOccurrence = &newSecOcc
+					changed = true
+				}
+			}
+
+			if changed {
+				if _, err := events2.Update(ctx, event); err != nil {
+					return fmt.Errorf("tick_reminders: update recomputed occurrence: %w", err)
 				}
 			}
 		}
 	}
 
 	for _, task := range sendTasks {
-		SendReminder(ctx, bot, db, task.user, task.event, task.rule, task.logID, task.occurrenceYear, cfg.BroadcastRatePerSec)
+		SendReminder(ctx, bot, db, task.user, task.event, task.rule, task.logID, task.occurrence, task.trackCalendarType, cfg.BroadcastRatePerSec)
 	}
 
 	if err := recordLastTick(ctx, db, nowUTC); err != nil {
@@ -319,13 +382,27 @@ func RecomputeOccurrences(ctx context.Context, db *sql.DB, logger *slog.Logger) 
 			return err
 		}
 		for _, event := range list {
+			changed := false
+
 			newOcc, err := core.NextOccurrence(event.CalendarType, event.Month, event.Day, today, user.AdarPolicy, user.Feb29Policy)
 			if err != nil {
 				logger.Error("recompute_occurrences: failed", "event_id", event.ID, "error", err)
-				continue
-			}
-			if event.NextOccurrence == nil || !event.NextOccurrence.Equal(newOcc) {
+			} else if event.NextOccurrence == nil || !event.NextOccurrence.Equal(newOcc) {
 				event.NextOccurrence = &newOcc
+				changed = true
+			}
+
+			if event.SecondaryMonth != nil && event.SecondaryDay != nil {
+				newSecOcc, err := core.NextOccurrence(secondaryCalendarType(event), *event.SecondaryMonth, *event.SecondaryDay, today, user.AdarPolicy, user.Feb29Policy)
+				if err != nil {
+					logger.Error("recompute_occurrences: secondary failed", "event_id", event.ID, "error", err)
+				} else if event.SecondaryNextOccurrence == nil || !event.SecondaryNextOccurrence.Equal(newSecOcc) {
+					event.SecondaryNextOccurrence = &newSecOcc
+					changed = true
+				}
+			}
+
+			if changed {
 				if _, err := events.Update(ctx, event); err != nil {
 					return err
 				}
