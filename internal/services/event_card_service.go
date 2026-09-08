@@ -2,6 +2,7 @@ package services
 
 import (
 	"strings"
+	"time"
 
 	"birthly/internal/core"
 	"birthly/internal/i18n"
@@ -53,6 +54,27 @@ func genderKwargs(gender *string, extra map[string]any) map[string]any {
 	return kwargs
 }
 
+// hebrewEquivalentDate returns the Hebrew calendar date to show alongside a
+// Gregorian-primary event when the user has ShowHebrewDate on. When the
+// birth year is known, it anchors to the actual birth date (the real Hebrew
+// day the person was born on) and finds that day's own next occurrence in
+// the Hebrew calendar, so the result stays correct year over year even as
+// the two calendars drift apart. Without a birth year there's no anchor to
+// convert, so it falls back to converting the upcoming Gregorian occurrence
+// itself, same as before.
+func hebrewEquivalentDate(event *models.Event, user *models.User, next, today time.Time) string {
+	if event.Year != nil {
+		birth := time.Date(*event.Year, time.Month(event.Month), event.Day, 0, 0, 0, 0, time.UTC)
+		_, anchorMonth, anchorDay := core.ToHebrew(birth)
+		if occ, err := core.NextOccurrence(core.CalendarTypeHebrew, anchorMonth, anchorDay, today, user.AdarPolicy, user.Feb29Policy); err == nil {
+			hebYear, hebMonth, hebDay := core.ToHebrew(occ)
+			return core.FormatHebrewDate(hebYear, hebMonth, hebDay, true)
+		}
+	}
+	hebYear, hebMonth, hebDay := core.ToHebrew(next)
+	return core.FormatHebrewDate(hebYear, hebMonth, hebDay, true)
+}
+
 // RenderCardText renders the S8 event card body. Empty fields are omitted
 // entirely. event.NextOccurrence must be non-nil (guaranteed by callers that
 // only render cards for events with a computed occurrence).
@@ -81,11 +103,13 @@ func RenderCardText(user *models.User, event *models.Event, rules []*models.Remi
 		lines = append(lines, "📅 "+core.FormatDate(next, user.DateFormat)+"  ·  "+hebStr)
 	case user.ShowHebrewDate:
 		// Gregorian-calendar event, but the user opted into seeing the
-		// Hebrew equivalent too — convert the upcoming occurrence itself
-		// (not the birth date) since that's the date actually being shown.
-		hebYear, hebMonth, hebDay := core.ToHebrew(next)
-		hebStr := core.FormatHebrewDate(hebYear, hebMonth, hebDay, true)
-		lines = append(lines, "📅 "+core.FormatDate(next, user.DateFormat)+"  ·  "+hebStr)
+		// Hebrew equivalent too. Shown on its own line rather than joined to
+		// the Gregorian date with "·": the two calendars drift against each
+		// other, so the Hebrew date usually falls a few days off from the
+		// Gregorian one shown next to it, and joining them implied a
+		// same-day correspondence that isn't real.
+		lines = append(lines, "📅 "+core.FormatDate(next, user.DateFormat))
+		lines = append(lines, i18n.T("card.hebrew_equivalent", lang, map[string]any{"date": hebrewEquivalentDate(event, user, next, today)}))
 	default:
 		lines = append(lines, "📅 "+core.FormatDate(next, user.DateFormat))
 	}

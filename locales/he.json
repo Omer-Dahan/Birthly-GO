@@ -68,6 +68,7 @@
   "add.change_reminder": "🔔 שנה תזכורת",
   "add.add_another": "➕ הוסף עוד",
   "card.days_until": "⏳ <b>{countdown}</b>",
+  "card.hebrew_equivalent": "✡️ בלוח העברי: <b>{date}</b>",
   "card.age": "🎈 יחגוג/תחגוג <b>{age}</b>",
   "card.age_m": "🎈 יחגוג <b>{age}</b>",
   "card.age_f": "🎈 תחגוג <b>{age}</b>",

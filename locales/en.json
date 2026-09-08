@@ -66,6 +66,7 @@
   "add.change_reminder": "🔔 Change reminder",
   "add.add_another": "➕ Add another",
   "card.days_until": "⏳ In <b>{countdown}</b>",
+  "card.hebrew_equivalent": "✡️ On the Hebrew calendar: <b>{date}</b>",
   "card.age": "🎈 Turning <b>{age}</b>",
   "card.age_memorial": "🕯 Year <b>{age}</b>",
   "card.reminders": "🔔 Reminders: {rules}",
