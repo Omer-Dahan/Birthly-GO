@@ -3,6 +3,10 @@
 # against a database that's being written concurrently under WAL mode
 # (unlike a raw file copy, which can grab a torn/inconsistent read).
 # Keeps the newest N snapshots in the backup dir, deletes the rest.
+#
+# Delegates to the backup-db Go binary (internal/backfill.Backup) instead of
+# the sqlite3 CLI, since the server only runs the pure-Go modernc.org/sqlite
+# driver and sqlite3 isn't guaranteed to be installed.
 set -euo pipefail
 
 DB_PATH="${1:-${DB_PATH:-data/birthly.db}}"
@@ -21,20 +25,17 @@ if [[ ! -f "$DB_PATH" ]]; then
   exit 1
 fi
 
-mkdir -p "$BACKUP_DIR"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKUP_BIN="$SCRIPT_DIR/../backup-db"
 
-STAMP="$(date -u +%Y%m%d_%H%M%S)"
-DEST="$BACKUP_DIR/birthly_manual_${STAMP}.db"
-
-sqlite3 "$DB_PATH" "VACUUM INTO '${DEST}'"
-
-# Retention: keep the newest $RETENTION snapshots produced by this script.
-mapfile -t snapshots < <(find "$BACKUP_DIR" -maxdepth 1 -name 'birthly_manual_*.db' | sort)
-count=${#snapshots[@]}
-if (( count > RETENTION )); then
-  for ((i = 0; i < count - RETENTION; i++)); do
-    rm -f "${snapshots[$i]}"
-  done
+if [[ ! -x "$BACKUP_BIN" ]]; then
+  echo "error: backup-db binary not found at $BACKUP_BIN" >&2
+  echo "build it locally and copy it over, same as the backfill tool:" >&2
+  echo "  GOOS=linux GOARCH=amd64 go build -ldflags=\"-s -w\" -o backup-db ./cmd/backup-db" >&2
+  echo "  scp backup-db <server>:/opt/birthly-go/backup-db" >&2
+  exit 1
 fi
+
+DEST="$("$BACKUP_BIN" --db-path "$DB_PATH" --backup-dir "$BACKUP_DIR" --retention "$RETENTION")"
 
 echo "$DEST"

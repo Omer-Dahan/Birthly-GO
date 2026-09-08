@@ -16,7 +16,7 @@ func TestBackup_CreatesSnapshotAndPrunes(t *testing.T) {
 	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	var last string
 	for i := 0; i < 9; i++ {
-		path, err := Backup(ctx, db, backupDir, base.Add(time.Duration(i)*time.Minute), 7)
+		path, err := Backup(ctx, db, backupDir, base.Add(time.Duration(i)*time.Minute), 7, "birthly_backfill")
 		if err != nil {
 			t.Fatalf("Backup #%d: %v", i, err)
 		}
@@ -40,5 +40,32 @@ func TestBackup_CreatesSnapshotAndPrunes(t *testing.T) {
 	oldest := filepath.Join(backupDir, "birthly_backfill_20260101_120000.db")
 	if _, err := os.Stat(oldest); !os.IsNotExist(err) {
 		t.Errorf("oldest snapshot should have been pruned, stat err = %v", err)
+	}
+}
+
+func TestBackup_DistinctPrefixesHaveIndependentRetention(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	backupDir := t.TempDir()
+
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 3; i++ {
+		if _, err := Backup(ctx, db, backupDir, base.Add(time.Duration(i)*time.Minute), 1, "birthly_backfill"); err != nil {
+			t.Fatalf("Backup (birthly_backfill) #%d: %v", i, err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := Backup(ctx, db, backupDir, base.Add(time.Duration(i)*time.Minute), 1, "birthly_manual"); err != nil {
+			t.Fatalf("Backup (birthly_manual) #%d: %v", i, err)
+		}
+	}
+
+	entries, err := os.ReadDir(backupDir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	// Retention of 1 for each prefix, applied independently, one survivor each.
+	if len(entries) != 2 {
+		t.Errorf("backup dir has %d files, want 2 (one survivor per prefix)", len(entries))
 	}
 }

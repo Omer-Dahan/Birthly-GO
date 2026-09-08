@@ -18,6 +18,16 @@ already-Hebrew events, trashed/muted events) is left untouched.
 
 Tool: `cmd/backfill-dual-dates`. Backup script: `deploy/backup_db.sh`.
 
+## A note on permissions
+
+`/opt/birthly-go/data` is `chmod 700`, owned by the `birthly-go` service
+user. Every command below that touches the database or backup directory runs
+as `sudo -u birthly-go ...`. Running them as your own login (or root) either
+fails with "permission denied" reading the DB, or, worse, succeeds but
+leaves new files (backups, the DB itself if a raw copy is ever used) owned
+by the wrong user, which then blocks the bot from reading or writing them on
+its next start.
+
 ## 1. Deploy the new version
 
 The binary embeds migration `00003_dual_calendar_dates.sql` (adds the
@@ -27,12 +37,6 @@ other deploy:
 ```bash
 git pull
 ./deploy/update.sh
-```
-
-Confirm the bot is up and the columns exist before continuing:
-
-```bash
-sqlite3 /opt/birthly-go/data/birthly.db "PRAGMA table_info(events)" | grep secondary
 ```
 
 ## 2. Stop the bot before touching the DB
@@ -45,36 +49,48 @@ under load:
 sudo systemctl stop birthly-go
 ```
 
-## 3. Take a backup
-
-The backfill tool creates its own timestamped backup automatically before
-`--apply` (see step 5) — this manual step is for an extra, independent
-snapshot before you start poking at anything:
-
-```bash
-cd /opt/birthly-go
-./deploy/backup_db.sh data/birthly.db data/backups
-```
-
-Prints the created snapshot's path. Keeps the newest 7 by default
-(`BACKUP_RETENTION` env var to change).
-
-## 4. Build the tool
+## 3. Build the tools
 
 The server has no Go toolchain installed (`deploy/install.sh` only ever
-copies a pre-built binary). Build locally, same as `deploy/update.sh` does
-for the bot itself, and copy it over:
+copies pre-built binaries). Build both tools locally, same as
+`deploy/update.sh` does for the bot itself, and copy them over:
 
 ```bash
 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o backfill-dual-dates ./cmd/backfill-dual-dates
-scp backfill-dual-dates <server>:/opt/birthly-go/backfill-dual-dates
+GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o backup-db ./cmd/backup-db
+scp backfill-dual-dates backup-db <server>:/opt/birthly-go/
 ```
+
+Both tools are pure Go (`modernc.org/sqlite`), so neither the server nor
+this step needs the `sqlite3` CLI installed.
+
+Confirm the deployed migration actually added the columns the tools expect
+by running the dry run in step 5: it queries `secondary_month` directly and
+fails loudly with a SQL error if the column is missing.
+
+## 4. Take a backup
+
+The backfill tool creates its own timestamped backup automatically before
+`--apply` (see step 6), this manual step is for an extra, independent
+snapshot before you start poking at anything. Runs as the `birthly-go` user
+(see "A note on permissions" above):
+
+```bash
+cd /opt/birthly-go
+sudo -u birthly-go ./deploy/backup_db.sh data/birthly.db data/backups
+```
+
+Prints the created snapshot's path
+(`data/backups/birthly_manual_<timestamp>.db`). Keeps the newest 7 by
+default (`BACKUP_RETENTION` env var to change). Manual snapshots and the
+tool's own pre-apply snapshots (step 6) use different filename prefixes, so
+each has its own independent retention count and neither prunes the other.
 
 ## 5. Dry run
 
 ```bash
 cd /opt/birthly-go
-./backfill-dual-dates --db-path data/birthly.db
+sudo -u birthly-go ./backfill-dual-dates --db-path data/birthly.db
 ```
 
 Prints a table of every event that would change: id, user id, name, the
@@ -89,29 +105,37 @@ month/day.
 ## 6. Apply
 
 ```bash
-./backfill-dual-dates --db-path data/birthly.db --apply
+sudo -u birthly-go ./backfill-dual-dates --db-path data/birthly.db --apply
 ```
 
 This will:
 1. Create its own timestamped backup in `data/backups/birthly_backfill_<timestamp>.db`
-   (via `VACUUM INTO`, safe under WAL) — aborts before touching anything if
+   (via `VACUUM INTO`, safe under WAL), aborts before touching anything if
    this fails.
-2. Run every computed change in a single transaction — any single event
+2. Run every computed change in a single transaction, any single event
    failing rolls back the entire batch, so the DB is never left half-updated.
 3. Print a log line per updated event.
 
 ## 7. Verify
 
-```bash
-sqlite3 data/birthly.db <<'SQL'
--- Should be 0: no gregorian-primary event left with a known year, no
--- secondary date, and an owner who wants the Hebrew date.
-SELECT COUNT(*) FROM events e JOIN users u ON u.id = e.user_id
-WHERE e.deleted_at IS NULL AND e.is_active = 1
-  AND e.calendar_type = 'gregorian' AND e.year IS NOT NULL
-  AND e.secondary_month IS NULL AND u.show_hebrew_date = 1;
+Re-run the dry run from step 5. It re-evaluates the same eligibility query
+used for the backfill, so a clean run now proves the batch is complete
+without needing any separate DB tooling:
 
--- Spot-check a converted event by name.
+```bash
+sudo -u birthly-go ./backfill-dual-dates --db-path data/birthly.db
+```
+
+Must now print `no eligible events found`. If it lists any events, something
+was missed or failed partway; check the apply log from step 6 for anything
+other than successful `applied N event(s)` lines before re-running.
+
+To spot-check a specific converted event's columns, you need the `sqlite3`
+CLI (`apt-get install sqlite3` if it's not already on the server, it is not
+required by any other step in this runbook):
+
+```bash
+sudo -u birthly-go sqlite3 data/birthly.db <<'SQL'
 SELECT id, first_name, last_name, calendar_type, year, month, day,
        secondary_calendar_type, secondary_month, secondary_day,
        next_occurrence, secondary_next_occurrence
@@ -119,12 +143,8 @@ FROM events WHERE first_name = '<name>';
 SQL
 ```
 
-First query must return 0. Second query's `calendar_type` should now read
-`hebrew`, with `secondary_calendar_type` = `gregorian` holding the original
-birth month/day.
-
-Also check the tool's own log output from step 6 for anything other than
-successful `applied N event(s)` lines.
+`calendar_type` should now read `hebrew`, with `secondary_calendar_type` =
+`gregorian` holding the original birth month/day.
 
 ## 8. Restart the bot
 
@@ -135,12 +155,14 @@ sudo systemctl status birthly-go --no-pager
 
 ## Rollback
 
-If something looks wrong after applying, stop the bot and restore the
-pre-apply backup:
+If something looks wrong after applying, stop the bot, remove the WAL/SHM
+files so SQLite doesn't replay stale write-ahead pages over the restored
+snapshot, and restore the pre-apply backup:
 
 ```bash
 sudo systemctl stop birthly-go
-cp data/backups/birthly_backfill_<timestamp>.db data/birthly.db
+sudo -u birthly-go rm -f data/birthly.db-wal data/birthly.db-shm
+sudo -u birthly-go cp data/backups/birthly_backfill_<timestamp>.db data/birthly.db
 sudo systemctl start birthly-go
 ```
 

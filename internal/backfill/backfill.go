@@ -2,7 +2,7 @@
 // dual-date events (Hebrew primary + Gregorian secondary) for users who have
 // ShowHebrewDate enabled. The Hebrew date is anchored to the real birth date
 // (year/month/day), the same way services.hebrewEquivalentDate computes the
-// card's Hebrew-equivalent line — not to this year's Gregorian occurrence.
+// card's Hebrew-equivalent line, not to this year's Gregorian occurrence.
 package backfill
 
 import (
@@ -65,7 +65,7 @@ type eligibleRow struct {
 // known birth year, belonging to users who opted into ShowHebrewDate, that
 // don't already carry a secondary date. Re-running the tool after a
 // successful Apply naturally returns nothing here, since those events are
-// no longer calendar_type='gregorian' — that's the idempotency guarantee.
+// no longer calendar_type='gregorian', that's the idempotency guarantee.
 const eligibleQuery = `
 SELECT e.id, e.user_id, e.first_name, e.last_name, e.year, e.month, e.day,
        u.timezone, u.adar_policy, u.feb29_policy

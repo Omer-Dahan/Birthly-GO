@@ -58,7 +58,7 @@ func run() error {
 		return nil
 	}
 
-	backupPath, err := backfill.Backup(ctx, db, *backupDir, time.Now(), backupRetention)
+	backupPath, err := backfill.Backup(ctx, db, *backupDir, time.Now(), backupRetention, "birthly_backfill")
 	if err != nil {
 		return fmt.Errorf("backup before apply (aborting, nothing written): %w", err)
 	}

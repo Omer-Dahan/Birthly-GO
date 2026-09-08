@@ -119,7 +119,7 @@ func TestPlan_ConvertsGregorianBirthdayToHebrewWithSecondary(t *testing.T) {
 	}
 
 	// AgeAt must read the new Year as a Hebrew year, not the original
-	// Gregorian birth year 2002 — that's the whole point of converting Year,
+	// Gregorian birth year 2002, that's the whole point of converting Year,
 	// not just Month/Day.
 	age, ok := core.AgeAt(got.CalendarType, got.Year, *got.NextOccurrence)
 	if !ok {
