@@ -38,7 +38,7 @@ func TestRenderCardText_HebrewEquivalentUsesRealBirthDate(t *testing.T) {
 	// The Hebrew line must stand on its own, not be "·"-joined onto the
 	// Gregorian date line as if the two coincide on the same day.
 	for _, line := range strings.Split(text, "\n") {
-		if strings.Contains(line, "04/11/2026") && strings.Contains(line, "בחשוון") {
+		if strings.Contains(line, "04/11") && strings.Contains(line, "בחשוון") {
 			t.Errorf("Hebrew equivalent must not be joined onto the Gregorian date line, got line: %q", line)
 		}
 	}
@@ -118,5 +118,8 @@ func TestRenderCardText_DualDateEventShowsRealStoredDates(t *testing.T) {
 	}
 	if !strings.Contains(text, "גם בלוח הלועזי") {
 		t.Errorf("card should show the real stored secondary Gregorian date, got:\n%s", text)
+	}
+	if strings.Contains(text, "בלוח העברי") {
+		t.Errorf("dual-date card must not show a converted Hebrew equivalent line, got:\n%s", text)
 	}
 }
