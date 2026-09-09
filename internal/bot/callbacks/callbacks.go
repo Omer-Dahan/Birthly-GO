@@ -111,6 +111,7 @@ var eventFlowActions = map[string]bool{
 	"noyear": true, "cat": true, "gender": true, "more": true, "field": true,
 	"clear": true, "skip": true, "save": true, "cancel": true,
 	"secyes": true, "secno": true,
+	"autoyes": true, "automanual": true, "autono": true,
 }
 
 // eventCardActions: card-scoped actions on an existing, owned event.

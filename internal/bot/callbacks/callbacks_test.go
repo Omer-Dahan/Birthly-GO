@@ -122,6 +122,25 @@ func TestPrefixRouting(t *testing.T) {
 	}
 }
 
+// TestEventFlowSecondaryAutoConfirmActions guards against the regression
+// where SecondaryAutoConfirmKeyboard (keyboards/events.go) sent "autoyes",
+// "automanual" and "autono" but eventFlowActions never learned about them,
+// so every tap panicked in production ("autoyes is not a registered
+// EventFlow action"). Each action here must round-trip through Encode/Decode
+// without error.
+func TestEventFlowSecondaryAutoConfirmActions(t *testing.T) {
+	for _, action := range []string{"autoyes", "automanual", "autono"} {
+		data := EventFlow{Action: action, Value: nil}.Encode()
+		decoded, err := DecodeEvent(data)
+		if err != nil {
+			t.Fatalf("DecodeEvent(%q) for action %q: %v", data, action, err)
+		}
+		if decoded.Flow == nil || decoded.Flow.Action != action {
+			t.Errorf("DecodeEvent(%q) = %+v, want Flow.Action=%q", data, decoded, action)
+		}
+	}
+}
+
 func TestDecodeEventUnknownActionErrors(t *testing.T) {
 	if _, err := DecodeEvent("ev:bogus:1"); err == nil {
 		t.Error("DecodeEvent with unknown action should error")
