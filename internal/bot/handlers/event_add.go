@@ -89,7 +89,11 @@ func msgAddName(b *gotgbot.Bot, ctx *ext.Context) error {
 		return sendErr
 	}
 
-	firstName, lastName := core.SplitName(cleaned)
+	firstName, lastNamePtr := core.SplitName(cleaned)
+	lastName := ""
+	if lastNamePtr != nil {
+		lastName = *lastNamePtr
+	}
 	store.UpdateData(user.ID, map[string]any{"first_name": firstName, "last_name": lastName})
 	store.SetState(user.ID, fsm.AddEventDate)
 
@@ -489,10 +493,7 @@ func renderSavedText(user *models.User, event *models.Event) string {
 	}
 	lines := []string{i18n.T("add.saved.title", lang, kw), ""}
 
-	name := core.Esc(event.FirstName)
-	if event.LastName != nil && *event.LastName != "" {
-		name += " " + core.Esc(*event.LastName)
-	}
+	name := core.Esc(core.FormatName(event.FirstName, event.LastName))
 	lines = append(lines, "🎂 <b>"+name+"</b>")
 
 	next := *event.NextOccurrence

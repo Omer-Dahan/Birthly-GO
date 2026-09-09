@@ -62,6 +62,134 @@ func TestFinalizeEvent_CreatesEventAndClearsState(t *testing.T) {
 	}
 }
 
+// TestMsgAddName_ThenFinalize_LastNameSurvivesEndToEnd drives msgAddName
+// itself (not a hand-seeded FSM map) with a full "First Last" name, then
+// finalizes the event, reproducing the exact path a real user hits. This is
+// the end-to-end regression for the reported bug: a last name typed into
+// the add-event flow silently vanished by the time the event was saved.
+func TestMsgAddName_ThenFinalize_LastNameSurvivesEndToEnd(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer db.Close()
+
+	user, err := services.GetOrCreateUser(ctx, db, 1006, nil, "U", nil, false)
+	if err != nil {
+		t.Fatalf("GetOrCreateUser: %v", err)
+	}
+
+	fsmStore := fsm.NewStore(time.Hour, 200)
+	fsmStore.SetState(user.ID, fsm.AddEventName)
+
+	msg := &gotgbot.Message{
+		Chat: gotgbot.Chat{Id: user.ID},
+		Text: "Dana Cohen",
+	}
+	gctx := &ext.Context{
+		Update:           &gotgbot.Update{Message: msg},
+		Data:             map[string]any{router.DataKeyUser: user, router.DataKeyDB: db, router.DataKeyFSM: fsmStore},
+		EffectiveMessage: msg,
+		EffectiveUser:    &gotgbot.User{Id: user.ID},
+		EffectiveChat:    &gotgbot.Chat{Id: user.ID},
+	}
+	bot := testEditBot(&fakeEditClient{})
+
+	if err := msgAddName(bot, gctx); err != nil {
+		t.Fatalf("msgAddName: %v", err)
+	}
+
+	event, limitErr, err := finalizeEvent(ctx, db, user, fsmStore, 3, 15, nil, "gregorian", nil, nil, 1000)
+	if err != nil {
+		t.Fatalf("finalizeEvent: %v", err)
+	}
+	if limitErr {
+		t.Fatal("unexpected limitErr=true")
+	}
+	if event.FirstName != "Dana" {
+		t.Errorf("FirstName = %q, want %q", event.FirstName, "Dana")
+	}
+	if event.LastName == nil || *event.LastName != "Cohen" {
+		t.Errorf("last name lost between msgAddName and finalizeEvent: event = %+v", event)
+	}
+}
+
+// TestFinalizeEvent_LastNameFromSplitNameSurvives mirrors the real
+// msgAddName code path (core.SplitName's *string result stored as-is into
+// FSM data) rather than pre-seeding "last_name" as a plain string. Storing
+// the *string directly used to make finalizeEvent's data["last_name"].(string)
+// assertion fail silently, dropping every last name a user typed.
+func TestFinalizeEvent_LastNameFromSplitNameSurvives(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer db.Close()
+
+	user, err := services.GetOrCreateUser(ctx, db, 1002, nil, "Dana", nil, false)
+	if err != nil {
+		t.Fatalf("GetOrCreateUser: %v", err)
+	}
+
+	fsmStore := fsm.NewStore(0, 200)
+	fsmStore.SetState(user.ID, fsm.AddEventName)
+
+	firstName, lastNamePtr := core.SplitName("Dana Cohen")
+	lastName := ""
+	if lastNamePtr != nil {
+		lastName = *lastNamePtr
+	}
+	fsmStore.UpdateData(user.ID, map[string]any{"first_name": firstName, "last_name": lastName})
+
+	event, limitErr, err := finalizeEvent(ctx, db, user, fsmStore, 3, 15, nil, "gregorian", nil, nil, 1000)
+	if err != nil {
+		t.Fatalf("finalizeEvent: %v", err)
+	}
+	if limitErr {
+		t.Fatal("unexpected limitErr=true")
+	}
+	if event.LastName == nil || *event.LastName != "Cohen" {
+		t.Errorf("last name dropped: event = %+v", event)
+	}
+}
+
+// TestFinalizeEvent_NoLastNameStaysNil covers the single-word-name case
+// through the same real code path, so the fix above doesn't turn "no last
+// name" into an empty-string last name instead of nil.
+func TestFinalizeEvent_NoLastNameStaysNil(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer db.Close()
+
+	user, err := services.GetOrCreateUser(ctx, db, 1004, nil, "Dana", nil, false)
+	if err != nil {
+		t.Fatalf("GetOrCreateUser: %v", err)
+	}
+
+	fsmStore := fsm.NewStore(0, 200)
+	fsmStore.SetState(user.ID, fsm.AddEventName)
+
+	firstName, lastNamePtr := core.SplitName("Dana")
+	lastName := ""
+	if lastNamePtr != nil {
+		lastName = *lastNamePtr
+	}
+	fsmStore.UpdateData(user.ID, map[string]any{"first_name": firstName, "last_name": lastName})
+
+	event, _, err := finalizeEvent(ctx, db, user, fsmStore, 3, 15, nil, "gregorian", nil, nil, 1000)
+	if err != nil {
+		t.Fatalf("finalizeEvent: %v", err)
+	}
+	if event.LastName != nil {
+		t.Errorf("expected nil LastName, got %q", *event.LastName)
+	}
+}
+
 func TestFinalizeEvent_LimitReached(t *testing.T) {
 	ctx := context.Background()
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -118,6 +246,33 @@ func TestRenderSavedText_IncludesNameDateAndReminder(t *testing.T) {
 	}
 	if !strings.Contains(text, "🎂") {
 		t.Errorf("renderSavedText missing birthday emoji: %q", text)
+	}
+}
+
+func TestRenderSavedText_IncludesLastName(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer db.Close()
+
+	user, err := services.GetOrCreateUser(ctx, db, 1005, nil, "U", nil, false)
+	if err != nil {
+		t.Fatalf("GetOrCreateUser: %v", err)
+	}
+	year := 1990
+	lastName := "Cohen"
+	event, err := services.CreateMinimalEvent(ctx, db, user, services.NewEventInput{
+		FirstName: "Dana", LastName: &lastName, Month: 3, Day: 15, Year: &year,
+	}, 1000)
+	if err != nil {
+		t.Fatalf("CreateMinimalEvent: %v", err)
+	}
+
+	text := renderSavedText(user, event)
+	if !strings.Contains(text, "Dana Cohen") {
+		t.Errorf("renderSavedText missing full name: %q", text)
 	}
 }
 

@@ -44,6 +44,40 @@ func TestRenderCardText_HebrewEquivalentUsesRealBirthDate(t *testing.T) {
 	}
 }
 
+// TestRenderCardText_ShowsLastNameWhenPresent covers the reported bug: an
+// event created with a last name must show it in the card header, and an
+// event with no last name must render exactly as before (first name only).
+func TestRenderCardText_ShowsLastNameWhenPresent(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	user := mustUser(t, ctx, db, 3010)
+
+	lastName := "Cohen"
+	withLast, err := CreateMinimalEvent(ctx, db, user, NewEventInput{
+		FirstName: "Dana", LastName: &lastName, Month: 3, Day: 15,
+	}, 1000)
+	if err != nil {
+		t.Fatalf("CreateMinimalEvent: %v", err)
+	}
+	if text := RenderCardText(user, withLast, nil); !strings.Contains(text, "Dana Cohen") {
+		t.Errorf("card should show the full name, got:\n%s", text)
+	}
+
+	noLast, err := CreateMinimalEvent(ctx, db, user, NewEventInput{
+		FirstName: "Dana", Month: 3, Day: 15,
+	}, 1000)
+	if err != nil {
+		t.Fatalf("CreateMinimalEvent: %v", err)
+	}
+	text := RenderCardText(user, noLast, nil)
+	if !strings.Contains(text, "Dana") {
+		t.Errorf("card should show the first name, got:\n%s", text)
+	}
+	if strings.Contains(text, "Dana Cohen") {
+		t.Errorf("card should not leak a last name onto a nameless event, got:\n%s", text)
+	}
+}
+
 // TestRenderCardText_HebrewEquivalentFallsBackWithoutBirthYear covers an
 // event with no known birth year: there's no anchor to convert from, so the
 // card falls back to approximating from the upcoming occurrence, same as
