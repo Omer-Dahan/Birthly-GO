@@ -114,12 +114,26 @@ func FormatPhone(phone string) string {
 	}
 }
 
-// FormatName joins first and last name, omitting a missing last name cleanly.
+// FormatName joins first and last name, omitting a missing last name
+// cleanly, and truncates the result to DisplayNameMaxLen so a name that
+// slipped past validation (old data, backup restore) can't break the card
+// layout.
 func FormatName(firstName string, lastName *string) string {
+	full := firstName
 	if lastName != nil && *lastName != "" {
-		return firstName + " " + *lastName
+		full = firstName + " " + *lastName
 	}
-	return firstName
+	return truncateDisplay(full, DisplayNameMaxLen)
+}
+
+// truncateDisplay caps s at maxLen runes, appending an ellipsis when it cuts
+// the string short.
+func truncateDisplay(s string, maxLen int) string {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	return string(runes[:maxLen]) + "…"
 }
 
 // RTL wraps text with a leading RLM to prevent bidi reordering in RTL context.

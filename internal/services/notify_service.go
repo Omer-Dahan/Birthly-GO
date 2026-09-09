@@ -35,10 +35,7 @@ var typeLabelsHe = map[string]string{
 }
 
 func displayName(event *models.Event) string {
-	if event.LastName != nil && *event.LastName != "" {
-		return event.FirstName + " " + *event.LastName
-	}
-	return event.FirstName
+	return core.FormatName(event.FirstName, event.LastName)
 }
 
 func genderPhrase(event *models.Event, lang string) string {

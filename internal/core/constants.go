@@ -91,12 +91,18 @@ const (
 
 // Field length limits (SPEC.md chapter 27).
 const (
-	NameMaxLen            = 64
+	NameMaxLen            = 40
+	NameMaxWords          = 4
 	NicknameMaxLen        = 32
 	NotesMaxLen           = 500
 	PhoneMaxLen           = 20
 	RelationMaxLen        = 32
 	CustomTypeLabelMaxLen = 32
+
+	// DisplayNameMaxLen bounds the rendered "first last" name defensively,
+	// covering names created before NameMaxLen was tightened or imported via
+	// backup restore (which bypasses ValidateName).
+	DisplayNameMaxLen = 60
 )
 
 // Domain limits.

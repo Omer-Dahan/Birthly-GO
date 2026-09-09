@@ -173,11 +173,48 @@ func isWhitespaceOnly(s string) bool {
 	return true
 }
 
-// ValidateName: 1-64 chars, control characters stripped, not empty/whitespace-only.
+var whitespaceRunRE = regexp.MustCompile(`\s+`)
+
+// collapseWhitespace folds any run of whitespace (spaces, tabs, repeated
+// presses) into a single space, so stray double-spacing in pasted names
+// doesn't carry through to the split first/last name or the rendered card.
+func collapseWhitespace(s string) string {
+	return whitespaceRunRE.ReplaceAllString(s, " ")
+}
+
+// isRepeatedCharNonsense is true when value, ignoring whitespace, is four or
+// more of the exact same rune (e.g. "aaaaaaaa") — a shape real names never
+// take, but keyboard-mashing or spam input does.
+func isRepeatedCharNonsense(value string) bool {
+	var first rune
+	count := 0
+	for _, r := range value {
+		if unicode.IsSpace(r) {
+			continue
+		}
+		if count == 0 {
+			first = r
+		} else if r != first {
+			return false
+		}
+		count++
+	}
+	return count >= 4
+}
+
+// ValidateName: 1-NameMaxLen chars, up to NameMaxWords words, control
+// characters stripped, internal whitespace collapsed, not empty/whitespace-
+// only/symbols-only/a single character repeated.
 func ValidateName(value string) (string, error) {
-	cleaned := strings.TrimSpace(stripControlChars(value))
+	cleaned := collapseWhitespace(strings.TrimSpace(stripControlChars(value)))
 	if cleaned == "" || isWhitespaceOnly(cleaned) {
 		return "", validationErrorf("מה השם? 🙂")
+	}
+	if ContainsOnlySymbols(cleaned) || isRepeatedCharNonsense(cleaned) {
+		return "", validationErrorf("❌ זה לא נראה כמו שם תקין. נסה שוב.")
+	}
+	if len(strings.Fields(cleaned)) > NameMaxWords {
+		return "", validationErrorf("יותר מדי מילים · עד %d מילים.", NameMaxWords)
 	}
 	if utf8RuneCount(cleaned) > NameMaxLen {
 		return "", validationErrorf("זה ארוך מדי · עד %d תווים.", NameMaxLen)

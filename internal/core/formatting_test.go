@@ -116,6 +116,20 @@ func TestFormatName(t *testing.T) {
 	}
 }
 
+func TestFormatName_TruncatesOverlongNames(t *testing.T) {
+	// Guards the card layout against names that predate the current
+	// NameMaxLen or arrived via backup restore, which bypasses ValidateName.
+	longLast := strings.Repeat("א", DisplayNameMaxLen)
+	got := FormatName("Dana", &longLast)
+	gotRunes := []rune(got)
+	if len(gotRunes) != DisplayNameMaxLen+1 { // +1 for the trailing ellipsis
+		t.Fatalf("FormatName length = %d, want %d", len(gotRunes), DisplayNameMaxLen+1)
+	}
+	if gotRunes[len(gotRunes)-1] != '…' {
+		t.Errorf("FormatName(long) = %q, want it to end with an ellipsis", got)
+	}
+}
+
 func TestRTL(t *testing.T) {
 	got := RTL("hello")
 	if !strings.HasPrefix(got, rlm) || !strings.HasSuffix(got, "hello") {
