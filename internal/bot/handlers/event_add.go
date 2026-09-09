@@ -37,6 +37,9 @@ func RegisterEventAdd(dispatcher *ext.Dispatcher) {
 	dispatcher.AddHandler(handlers.NewCallback(eventFlowActionFilter("hd"), cbAddHebrewDay))
 	dispatcher.AddHandler(handlers.NewCallback(eventFlowActionFilter("secyes"), cbAddSecondaryYes))
 	dispatcher.AddHandler(handlers.NewCallback(eventFlowActionFilter("secno"), cbAddSecondaryNo))
+	dispatcher.AddHandler(handlers.NewCallback(eventFlowActionFilter("autoyes"), cbAddSecondaryAutoYes))
+	dispatcher.AddHandler(handlers.NewCallback(eventFlowActionFilter("automanual"), cbAddSecondaryAutoManual))
+	dispatcher.AddHandler(handlers.NewCallback(eventFlowActionFilter("autono"), cbAddSecondaryAutoNo))
 }
 
 func anyText(msg *gotgbot.Message) bool { return msg.Text != "" }
@@ -251,6 +254,17 @@ func cbAddHebrewDay(b *gotgbot.Bot, ctx *ext.Context) error {
 	return nil
 }
 
+// exactGregorianBirthDate resolves the exact civil date a hebrew birthday
+// (year+month+day) fell on. ResolveMonth always yields a month that exists
+// in hebYear (adar_i/adar_ii only matter in leap years; both resolve to the
+// single Adar in a non-leap year), so ToGregorian here should never error in
+// practice. Callers keep the error return for the same defensive reason
+// ToGregorian itself does.
+func exactGregorianBirthDate(hebYear, hebMonth, hebDay int, adarPolicy string) (time.Time, error) {
+	resolvedMonth := core.ResolveMonth(hebYear, hebMonth, adarPolicy)
+	return core.ToGregorian(hebYear, resolvedMonth, hebDay)
+}
+
 func msgAddHebrewYear(b *gotgbot.Bot, ctx *ext.Context) error {
 	user := User(ctx)
 	store := router.FSMFromContext(ctx)
@@ -265,8 +279,23 @@ func msgAddHebrewYear(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	store.UpdateData(user.ID, map[string]any{"heb_year": year})
-	store.SetState(user.ID, fsm.AddEventSecondaryPrompt)
 
+	data := store.GetData(user.ID)
+	hebMonth, _ := data["heb_month"].(int)
+	hebDay, _ := data["heb_day"].(int)
+	if greg, gErr := exactGregorianBirthDate(year, hebMonth, hebDay, user.AdarPolicy); gErr == nil {
+		store.UpdateData(user.ID, map[string]any{
+			"auto_sec_month": int(greg.Month()),
+			"auto_sec_day":   greg.Day(),
+		})
+		store.SetState(user.ID, fsm.AddEventSecondaryAutoConfirm)
+
+		text := i18n.T("add.secondary_auto.prompt", user.Language, map[string]any{"date": core.FormatDate(greg, user.DateFormat)})
+		_, sendErr := ctx.EffectiveMessage.Reply(b, text, &gotgbot.SendMessageOpts{ReplyMarkup: keyboards.SecondaryAutoConfirmKeyboard(user.Language)})
+		return sendErr
+	}
+
+	store.SetState(user.ID, fsm.AddEventSecondaryPrompt)
 	text := i18n.T("add.secondary.prompt", user.Language, nil)
 	_, sendErr := ctx.EffectiveMessage.Reply(b, text, &gotgbot.SendMessageOpts{ReplyMarkup: keyboards.SecondaryDatePromptKeyboard(user.Language)})
 	return sendErr
@@ -298,10 +327,61 @@ func cbAddSecondaryNo(b *gotgbot.Bot, ctx *ext.Context) error {
 	if state, ok := store.GetState(user.ID); !ok || state != fsm.AddEventSecondaryPrompt {
 		return ext.ContinueGroups
 	}
+	return finalizeSecondaryAndRespond(b, ctx, user, store, nil, nil)
+}
 
+// cbAddSecondaryAutoYes accepts the gregorian date auto-computed from the
+// hebrew year/month/day just entered as the event's secondary date.
+func cbAddSecondaryAutoYes(b *gotgbot.Bot, ctx *ext.Context) error {
+	user := User(ctx)
+	store := router.FSMFromContext(ctx)
+	if state, ok := store.GetState(user.ID); !ok || state != fsm.AddEventSecondaryAutoConfirm {
+		return ext.ContinueGroups
+	}
+
+	data := store.GetData(user.ID)
+	month, _ := data["auto_sec_month"].(int)
+	day, _ := data["auto_sec_day"].(int)
+	return finalizeSecondaryAndRespond(b, ctx, user, store, &month, &day)
+}
+
+// cbAddSecondaryAutoManual lets the user discard the auto-computed date and
+// type a gregorian secondary date manually instead.
+func cbAddSecondaryAutoManual(b *gotgbot.Bot, ctx *ext.Context) error {
+	user := User(ctx)
+	store := router.FSMFromContext(ctx)
+	if state, ok := store.GetState(user.ID); !ok || state != fsm.AddEventSecondaryAutoConfirm {
+		return ext.ContinueGroups
+	}
+
+	store.SetState(user.ID, fsm.AddEventSecondaryDate)
+	text := i18n.T("add.secondary.date_title", user.Language, nil) + "\n\n" + i18n.T("add.secondary.date_hint", user.Language, nil)
+	if err := EditOrIgnore(b, ctx.CallbackQuery, text, keyboards.SecondaryDateStepKeyboard(user.Language)); err != nil {
+		return err
+	}
+	AnswerCallback(b, ctx.CallbackQuery, "")
+	return nil
+}
+
+// cbAddSecondaryAutoNo declines the auto-computed date and finalizes the
+// event with only its hebrew primary date.
+func cbAddSecondaryAutoNo(b *gotgbot.Bot, ctx *ext.Context) error {
+	user := User(ctx)
+	store := router.FSMFromContext(ctx)
+	if state, ok := store.GetState(user.ID); !ok || state != fsm.AddEventSecondaryAutoConfirm {
+		return ext.ContinueGroups
+	}
+	return finalizeSecondaryAndRespond(b, ctx, user, store, nil, nil)
+}
+
+// finalizeSecondaryAndRespond finalizes a hebrew-primary event (optionally
+// with a gregorian secondary date) and edits the triggering callback's
+// message into the saved-event card, shared by every terminal branch of the
+// secondary-date prompt (manual "no thanks", auto-confirm accept/decline).
+func finalizeSecondaryAndRespond(b *gotgbot.Bot, ctx *ext.Context, user *models.User, store *fsm.Store, secondaryMonth, secondaryDay *int) error {
 	db := router.DBFromContext(ctx)
 	maxEvents := router.ConfigFromContext(ctx).MaxEventsPerUser
-	event, limitErr, err := finalizeSecondaryFlow(context.Background(), db, user, store, maxEvents, nil, nil)
+	event, limitErr, err := finalizeSecondaryFlow(context.Background(), db, user, store, maxEvents, secondaryMonth, secondaryDay)
 	if err != nil {
 		return err
 	}

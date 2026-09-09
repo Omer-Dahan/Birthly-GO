@@ -44,6 +44,10 @@ const (
 	// feature). Never entered from the gregorian-primary branch.
 	AddEventSecondaryPrompt State = "add_event:secondary_prompt"
 	AddEventSecondaryDate   State = "add_event:secondary_date"
+	// AddEventSecondaryAutoConfirm offers the gregorian date auto-computed
+	// from the hebrew year/month/day just entered (the exact civil birth
+	// date), skipping manual entry when the user accepts it.
+	AddEventSecondaryAutoConfirm State = "add_event:secondary_auto_confirm"
 )
 
 // EditEvent flow.

@@ -88,6 +88,18 @@ func SecondaryDateStepKeyboard(lang string) *gotgbot.InlineKeyboardMarkup {
 	return &gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{CancelButton(i18n.T("common.cancel", lang, nil))}}}
 }
 
+// SecondaryAutoConfirmKeyboard offers the gregorian date auto-computed from
+// the hebrew year/month/day just entered: accept it as-is, type a different
+// one manually, or skip the secondary date entirely.
+func SecondaryAutoConfirmKeyboard(lang string) *gotgbot.InlineKeyboardMarkup {
+	yes := flowBtn(i18n.T("add.secondary_auto.yes", lang, nil), "autoyes")
+	manual := flowBtn(i18n.T("add.secondary_auto.manual", lang, nil), "automanual")
+	no := flowBtn(i18n.T("add.secondary_auto.no", lang, nil), "autono")
+	return &gotgbot.InlineKeyboardMarkup{
+		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{yes}, {manual}, {no}, {CancelButton(i18n.T("common.cancel", lang, nil))}},
+	}
+}
+
 func SavedKeyboard(lang string, eventID int64) *gotgbot.InlineKeyboardMarkup {
 	more := flowBtn(i18n.T("add.more_details", lang, nil), "more")
 	changeReminder := cardBtn(i18n.T("add.change_reminder", lang, nil), "rem", eventID)
