@@ -171,6 +171,14 @@ func TestFinalizeSecondaryFlow_HebrewPrimaryWithGregorianSecondary(t *testing.T)
 	if !strings.Contains(text, "🗓") {
 		t.Errorf("renderSavedText missing secondary-date line for a dual-date event: %q", text)
 	}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, "🗓") && strings.Contains(line, "⏳") {
+			t.Errorf("secondary-date line must not carry its own countdown, got:\n%s", line)
+		}
+	}
+	if n := strings.Count(text, "⏳"); n != 1 {
+		t.Errorf("expected exactly one countdown (⏳) for a dual-date event, got %d in:\n%s", n, text)
+	}
 }
 
 // TestFinalizeSecondaryFlow_NoSecondaryLeavesFieldsNil covers "no thanks":

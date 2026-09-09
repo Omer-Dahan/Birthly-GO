@@ -122,4 +122,13 @@ func TestRenderCardText_DualDateEventShowsRealStoredDates(t *testing.T) {
 	if strings.Contains(text, "בלוח העברי") {
 		t.Errorf("dual-date card must not show a converted Hebrew equivalent line, got:\n%s", text)
 	}
+
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, "גם בלוח הלועזי") && strings.Contains(line, "⏳") {
+			t.Errorf("secondary-date line must not carry its own countdown, got:\n%s", line)
+		}
+	}
+	if n := strings.Count(text, "⏳"); n != 1 {
+		t.Errorf("expected exactly one countdown (⏳) on a dual-date card, got %d in:\n%s", n, text)
+	}
 }

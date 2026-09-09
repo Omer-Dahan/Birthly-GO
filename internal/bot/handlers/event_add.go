@@ -511,9 +511,8 @@ func renderSavedText(user *models.User, event *models.Event) string {
 
 	if event.SecondaryMonth != nil && event.SecondaryNextOccurrence != nil {
 		secNext := *event.SecondaryNextOccurrence
-		secCountdown := core.FormatCountdown(core.DaysUntil(secNext, services.UserToday(user)))
 		lines = append(lines, i18n.T("card.secondary_date", lang, mergeKwargs(map[string]any{
-			"date": core.FormatDate(secNext, user.DateFormat), "countdown": secCountdown,
+			"date": core.FormatDate(secNext, user.DateFormat),
 		}, kw)))
 	}
 

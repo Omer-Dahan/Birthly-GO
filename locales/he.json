@@ -78,7 +78,7 @@
   "card.age_f": "🎈 תחגוג <b>{age}</b>",
   "card.age_memorial": "🕯 שנה <b>{age}</b>",
   "card.reminders": "🔔 תזכורות: {rules}",
-  "card.secondary_date": "🗓 גם בלוח הלועזי: <b>{date}</b> · {countdown}",
+  "card.secondary_date": "🗓 גם בלוח הלועזי: <b>{date}</b>",
   "card.edit": "✏️ ערוך",
   "card.greeting": "💌 ברכה",
   "card.reminders_btn": "🔔 תזכורות",

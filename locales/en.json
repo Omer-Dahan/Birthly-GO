@@ -74,7 +74,7 @@
   "card.age": "🎈 Turning <b>{age}</b>",
   "card.age_memorial": "🕯 Year <b>{age}</b>",
   "card.reminders": "🔔 Reminders: {rules}",
-  "card.secondary_date": "🗓 Also on the Gregorian calendar: <b>{date}</b> · {countdown}",
+  "card.secondary_date": "🗓 Also on the Gregorian calendar: <b>{date}</b>",
   "card.edit": "✏️ Edit",
   "card.greeting": "💌 Greeting",
   "card.reminders_btn": "🔔 Reminders",
