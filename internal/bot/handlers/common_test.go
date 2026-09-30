@@ -4,11 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
+
+// testLogger discards its output. Tests that need to assert on log lines
+// build their own slog.Logger over a buffer instead of using this.
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
 
 // fakeEditClient intercepts editMessageText calls so EditOrIgnore can be
 // tested without touching the network. editErr controls what the call

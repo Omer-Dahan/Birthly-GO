@@ -42,6 +42,7 @@ type sendTask struct {
 	logID             int64
 	occurrence        time.Time
 	trackCalendarType string
+	scheduledAt       time.Time
 }
 
 type fireKey struct {
@@ -77,6 +78,72 @@ func secondaryCalendarType(event *models.Event) string {
 	return core.CalendarTypeGregorian
 }
 
+// trackLabel names event's track as "primary" or "secondary" for the
+// reminder audit log, given the calendar type the fired occurrence came
+// from. A dual-date event's two tracks always differ in calendar_type
+// (SPEC "dual hebrew/gregorian dates" only offers the hebrew-primary +
+// gregorian-secondary direction), so comparing against event.CalendarType
+// is enough to tell them apart.
+func trackLabel(event *models.Event, calendarType string) string {
+	if calendarType == event.CalendarType {
+		return "primary"
+	}
+	return "secondary"
+}
+
+// reminderLogAttrs builds the shared identifying fields for a reminder
+// lifecycle log line (queued/sent/skipped/failed): who, which event and
+// track, and which rule (when known) produced it. ruleID is passed
+// separately from rule because a skip can know the log row's rule_id while
+// the rule itself is unavailable (deleted, or not worth fetching just to
+// log a skip).
+func reminderLogAttrs(userID, eventID int64, name, track string, occurrence, scheduledAt time.Time, ruleID *int64, rule *models.ReminderRule) []any {
+	attrs := []any{
+		"user_id", userID,
+		"event_id", eventID,
+		"name", name,
+		"track", track,
+		"occurrence_date", occurrence,
+		"scheduled_at", scheduledAt,
+		"rule_id", ruleID,
+	}
+	if rule != nil {
+		if rule.OffsetDays != nil {
+			attrs = append(attrs, "offset_days", *rule.OffsetDays)
+		}
+		if rule.OffsetMinutes != nil {
+			attrs = append(attrs, "offset_minutes", *rule.OffsetMinutes)
+		}
+		sendTime := ""
+		if rule.SendTime != nil {
+			sendTime = *rule.SendTime
+		}
+		scope := "global"
+		if rule.EventID != nil {
+			scope = "per_event"
+		}
+		attrs = append(attrs, "send_time", sendTime, "scope", scope)
+	}
+	return attrs
+}
+
+// skipReasonForUser names why RecoverPending skips a pending log at the
+// user-eligibility check, matching the exact condition that tripped.
+func skipReasonForUser(err error, user *models.User) string {
+	switch {
+	case err != nil || user == nil:
+		return "user_not_found"
+	case !user.NotificationsEnabled:
+		return "notifications_disabled"
+	case user.IsBlocked:
+		return "user_blocked"
+	case user.BotBlockedByUser:
+		return "bot_blocked_by_user"
+	default:
+		return "unknown"
+	}
+}
+
 // resolveTrackCalendarType infers which calendar track a recovered pending
 // log belongs to by matching its stored occurrence_date against the event's
 // current secondary_next_occurrence. Falls back to the primary calendar type
@@ -108,11 +175,27 @@ func RecoverPending(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *conf
 	logger.Info("recover_pending_start", "count", len(pendingLogs))
 
 	for _, log := range pendingLogs {
+		// Fetched up front (not just on the send path) so every skip reason
+		// below can log the same identifying fields as a normal queue/send
+		// line: the log row alone can't say who or what this was about.
+		eventRepo := repo.NewEventRepo(db, log.UserID)
+		event, eventErr := eventRepo.GetOwned(ctx, log.EventID)
+		name, track := "", ""
+		if event != nil {
+			name = core.FormatName(event.FirstName, event.LastName)
+			track = trackLabel(event, resolveTrackCalendarType(event, log.OccurrenceDate))
+		}
+		logSkip := func(reason string) {
+			attrs := reminderLogAttrs(log.UserID, log.EventID, name, track, log.OccurrenceDate, log.ScheduledAt, log.RuleID, nil)
+			attrs = append(attrs, "reason", reason)
+			logger.Info("reminder_skipped", attrs...)
+		}
+
 		if nowUTC.Sub(log.ScheduledAt) > grace {
 			if err := notifRepo.MarkSkipped(ctx, log.ID); err != nil {
 				logger.Error("recover_pending: mark skipped failed", "log_id", log.ID, "error", err)
 			} else {
-				logger.Warn("recover_pending_skipped_grace", "log_id", log.ID, "event_id", log.EventID, "scheduled_at", log.ScheduledAt)
+				logSkip("grace_window")
 			}
 			continue
 		}
@@ -120,13 +203,13 @@ func RecoverPending(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *conf
 		user, err := userRepo.Get(ctx, log.UserID)
 		if err != nil || user == nil || !user.NotificationsEnabled || user.IsBlocked || user.BotBlockedByUser {
 			_ = notifRepo.MarkSkipped(ctx, log.ID)
+			logSkip(skipReasonForUser(err, user))
 			continue
 		}
 
-		eventRepo := repo.NewEventRepo(db, user.ID)
-		event, err := eventRepo.GetOwned(ctx, log.EventID)
-		if err != nil || event == nil || !event.IsActive || event.DeletedAt != nil {
+		if eventErr != nil || event == nil || !event.IsActive || event.DeletedAt != nil {
 			_ = notifRepo.MarkSkipped(ctx, log.ID)
+			logSkip("event_deleted_or_inactive")
 			continue
 		}
 
@@ -140,11 +223,11 @@ func RecoverPending(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *conf
 		}
 		if err != nil || rule == nil || !rule.Enabled {
 			_ = notifRepo.MarkSkipped(ctx, log.ID)
-			logger.Warn("recover_pending_skipped_rule", "log_id", log.ID, "event_id", log.EventID, "rule_id", log.RuleID)
+			logSkip("rule_deleted_or_disabled")
 			continue
 		}
 
-		SendReminder(ctx, bot, db, user, event, rule, log.ID, log.OccurrenceDate, resolveTrackCalendarType(event, log.OccurrenceDate), cfg.BroadcastRatePerSec)
+		SendReminder(ctx, bot, db, user, event, rule, log.ID, log.OccurrenceDate, resolveTrackCalendarType(event, log.OccurrenceDate), cfg.BroadcastRatePerSec, log.ScheduledAt, logger)
 	}
 	return nil
 }
@@ -271,6 +354,9 @@ func TickReminders(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *confi
 						continue // not yet
 					}
 
+					name := core.FormatName(event.FirstName, event.LastName)
+					label := trackLabel(event, track.calendarType)
+
 					if nowUTC.Sub(fireUTC) > grace {
 						log, err := notifRepo.CreatePending(ctx, user.ID, event.ID, &rule.ID, *occ, fireUTC)
 						if err != nil {
@@ -278,7 +364,9 @@ func TickReminders(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *confi
 						}
 						if log != nil {
 							_ = notifRepo.MarkSkipped(ctx, log.ID)
-							logger.Warn("reminder_skipped_grace", "user_id", user.ID, "event_id", event.ID, "fire_utc", fireUTC)
+							attrs := reminderLogAttrs(user.ID, event.ID, name, label, *occ, fireUTC, &rule.ID, rule)
+							attrs = append(attrs, "reason", "grace_window")
+							logger.Info("reminder_skipped", attrs...)
 						}
 						continue
 					}
@@ -298,7 +386,8 @@ func TickReminders(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *confi
 						continue
 					}
 
-					sendTasks = append(sendTasks, sendTask{user, event, rule, log.ID, *occ, track.calendarType})
+					logger.Info("reminder_queued", reminderLogAttrs(user.ID, event.ID, name, label, *occ, fireUTC, &rule.ID, rule)...)
+					sendTasks = append(sendTasks, sendTask{user, event, rule, log.ID, *occ, track.calendarType, fireUTC})
 				}
 			}
 		}
@@ -318,8 +407,15 @@ func TickReminders(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *confi
 				if err != nil {
 					logger.Error("tick_reminders: recompute occurrence failed", "event_id", event.ID, "error", err)
 				} else if event.NextOccurrence == nil || !event.NextOccurrence.Equal(newOcc) {
+					oldOcc := event.NextOccurrence
 					event.NextOccurrence = &newOcc
 					changed = true
+					logger.Info("event_occurrence_advanced",
+						"user_id", user.ID, "event_id", event.ID,
+						"name", core.FormatName(event.FirstName, event.LastName),
+						"track", "primary",
+						"old_next_occurrence", oldOcc, "new_next_occurrence", newOcc,
+					)
 				}
 			}
 
@@ -333,8 +429,15 @@ func TickReminders(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *confi
 				if err != nil {
 					logger.Error("tick_reminders: recompute secondary occurrence failed", "event_id", event.ID, "error", err)
 				} else if event.SecondaryNextOccurrence == nil || !event.SecondaryNextOccurrence.Equal(newSecOcc) {
+					oldSecOcc := event.SecondaryNextOccurrence
 					event.SecondaryNextOccurrence = &newSecOcc
 					changed = true
+					logger.Info("event_occurrence_advanced",
+						"user_id", user.ID, "event_id", event.ID,
+						"name", core.FormatName(event.FirstName, event.LastName),
+						"track", "secondary",
+						"old_next_occurrence", oldSecOcc, "new_next_occurrence", newSecOcc,
+					)
 				}
 			}
 
@@ -347,7 +450,7 @@ func TickReminders(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *confi
 	}
 
 	for _, task := range sendTasks {
-		SendReminder(ctx, bot, db, task.user, task.event, task.rule, task.logID, task.occurrence, task.trackCalendarType, cfg.BroadcastRatePerSec)
+		SendReminder(ctx, bot, db, task.user, task.event, task.rule, task.logID, task.occurrence, task.trackCalendarType, cfg.BroadcastRatePerSec, task.scheduledAt, logger)
 	}
 
 	if err := recordLastTick(ctx, db, nowUTC); err != nil {
@@ -396,8 +499,15 @@ func RecomputeOccurrences(ctx context.Context, db *sql.DB, logger *slog.Logger) 
 			if err != nil {
 				logger.Error("recompute_occurrences: failed", "event_id", event.ID, "error", err)
 			} else if event.NextOccurrence == nil || !event.NextOccurrence.Equal(newOcc) {
+				oldOcc := event.NextOccurrence
 				event.NextOccurrence = &newOcc
 				changed = true
+				logger.Info("event_occurrence_advanced",
+					"user_id", user.ID, "event_id", event.ID,
+					"name", core.FormatName(event.FirstName, event.LastName),
+					"track", "primary",
+					"old_next_occurrence", oldOcc, "new_next_occurrence", newOcc,
+				)
 			}
 
 			if event.SecondaryMonth != nil && event.SecondaryDay != nil {
@@ -405,8 +515,15 @@ func RecomputeOccurrences(ctx context.Context, db *sql.DB, logger *slog.Logger) 
 				if err != nil {
 					logger.Error("recompute_occurrences: secondary failed", "event_id", event.ID, "error", err)
 				} else if event.SecondaryNextOccurrence == nil || !event.SecondaryNextOccurrence.Equal(newSecOcc) {
+					oldSecOcc := event.SecondaryNextOccurrence
 					event.SecondaryNextOccurrence = &newSecOcc
 					changed = true
+					logger.Info("event_occurrence_advanced",
+						"user_id", user.ID, "event_id", event.ID,
+						"name", core.FormatName(event.FirstName, event.LastName),
+						"track", "secondary",
+						"old_next_occurrence", oldSecOcc, "new_next_occurrence", newSecOcc,
+					)
 				}
 			}
 

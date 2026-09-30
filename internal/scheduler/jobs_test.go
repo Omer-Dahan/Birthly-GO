@@ -1,6 +1,8 @@
 package scheduler
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -18,6 +20,37 @@ import (
 	"birthly/internal/store/models"
 	"birthly/internal/store/repo"
 )
+
+// parseLogLines decodes each JSON-object line a slog.NewJSONHandler wrote
+// into buf, for tests that assert on specific log fields rather than just
+// "something got logged".
+func parseLogLines(t *testing.T, buf *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var lines []map[string]any
+	scanner := bufio.NewScanner(buf)
+	for scanner.Scan() {
+		text := scanner.Text()
+		if text == "" {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(text), &m); err != nil {
+			t.Fatalf("invalid JSON log line: %v\nline: %s", err, text)
+		}
+		lines = append(lines, m)
+	}
+	return lines
+}
+
+// findLogLine returns the first parsed log line with msg == want, or nil.
+func findLogLine(lines []map[string]any, want string) map[string]any {
+	for _, l := range lines {
+		if l["msg"] == want {
+			return l
+		}
+	}
+	return nil
+}
 
 // fakeBotClient intercepts every gotgbot API call so tests never touch the
 // network. sendResult/sendErr control what "sendMessage" returns; every
@@ -911,5 +944,210 @@ func TestTickReminders_DualDateEventFiresBothTracksIndependently(t *testing.T) {
 	}
 	if client.sendCount() != 2 {
 		t.Fatalf("sendCount after re-tick on secondary day = %d, want still 2", client.sendCount())
+	}
+}
+
+// TestTickReminders_LogsReminderSent is the regression test for the core
+// gap reported against the running bot: SendReminder used to write nothing
+// to the log on a successful send, so journalctl alone could never explain
+// a reminder the owner received. This asserts the "reminder_sent" line
+// carries the user/event/rule identity needed to answer "why did I get
+// this, and for whom".
+func TestTickReminders_LogsReminderSent(t *testing.T) {
+	db := testDB(t)
+	offset := 1
+	sendTime := "09:00"
+	_, event := seedUserEventRule(t, db, 1, "Asia/Jerusalem", "09:00", &offset, &sendTime, nil)
+
+	client := &fakeBotClient{}
+	bot := testBot(client)
+	cfg := testConfig()
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	if err := TickReminders(context.Background(), bot, db, cfg, time.Date(2026, 7, 31, 6, 1, 0, 0, time.UTC), logger); err != nil {
+		t.Fatalf("TickReminders: %v", err)
+	}
+	if client.sendCount() != 1 {
+		t.Fatalf("sendCount = %d, want 1", client.sendCount())
+	}
+
+	lines := parseLogLines(t, &buf)
+
+	if findLogLine(lines, "reminder_queued") == nil {
+		t.Error("no reminder_queued log line found")
+	}
+
+	sent := findLogLine(lines, "reminder_sent")
+	if sent == nil {
+		t.Fatalf("no reminder_sent log line found; lines: %+v", lines)
+	}
+	if got, want := sent["user_id"], float64(1); got != want {
+		t.Errorf("user_id = %v, want %v", got, want)
+	}
+	if got, want := sent["event_id"], float64(event.ID); got != want {
+		t.Errorf("event_id = %v, want %v", got, want)
+	}
+	if sent["name"] != "Dana" {
+		t.Errorf("name = %v, want Dana", sent["name"])
+	}
+	if sent["track"] != "primary" {
+		t.Errorf("track = %v, want primary", sent["track"])
+	}
+	if sent["rule_id"] == nil {
+		t.Error("rule_id missing from reminder_sent line")
+	}
+	if got, want := sent["offset_days"], float64(1); got != want {
+		t.Errorf("offset_days = %v, want %v", got, want)
+	}
+	if sent["scope"] != "global" {
+		t.Errorf("scope = %v, want global", sent["scope"])
+	}
+	if sent["late_by"] == nil {
+		t.Error("late_by missing from reminder_sent line")
+	}
+}
+
+// TestTickReminders_LogsReminderSkippedGrace covers the "skipped" state's
+// reason field: a reminder discovered past the grace window must be
+// explainable from the running log alone (who, which event, why), not just
+// visible as a silent "skipped" row in notifications_log.
+func TestTickReminders_LogsReminderSkippedGrace(t *testing.T) {
+	db := testDB(t)
+	offset := 1
+	sendTime := "09:00"
+	_, event := seedUserEventRule(t, db, 1, "Asia/Jerusalem", "09:00", &offset, &sendTime, nil)
+
+	client := &fakeBotClient{}
+	bot := testBot(client)
+	cfg := testConfig()
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	// Fire time is 06:00 UTC; resume at 16:00 UTC: 10h late, outside 6h grace.
+	if err := TickReminders(context.Background(), bot, db, cfg, time.Date(2026, 7, 31, 16, 0, 0, 0, time.UTC), logger); err != nil {
+		t.Fatalf("TickReminders: %v", err)
+	}
+	if client.sendCount() != 0 {
+		t.Fatalf("sendCount = %d, want 0 (outside grace)", client.sendCount())
+	}
+
+	lines := parseLogLines(t, &buf)
+	skipped := findLogLine(lines, "reminder_skipped")
+	if skipped == nil {
+		t.Fatalf("no reminder_skipped log line found; lines: %+v", lines)
+	}
+	if skipped["reason"] != "grace_window" {
+		t.Errorf("reason = %v, want grace_window", skipped["reason"])
+	}
+	if got, want := skipped["event_id"], float64(event.ID); got != want {
+		t.Errorf("event_id = %v, want %v", got, want)
+	}
+	if got, want := skipped["user_id"], float64(1); got != want {
+		t.Errorf("user_id = %v, want %v", got, want)
+	}
+	if skipped["name"] != "Dana" {
+		t.Errorf("name = %v, want Dana", skipped["name"])
+	}
+}
+
+// TestTickReminders_LogsReminderFailedBlocked is required audit-trail
+// coverage for the reminder_failed log line on the 403 (bot blocked) path
+// in SendReminder. It also asserts the level is WARN, not INFO, per the
+// audit finding that a failure is not a routine state change.
+func TestTickReminders_LogsReminderFailedBlocked(t *testing.T) {
+	db := testDB(t)
+	offset := 1
+	_, event := seedUserEventRule(t, db, 1, "Asia/Jerusalem", "09:00", &offset, nil, nil)
+
+	client := &fakeBotClient{sendErr: &gotgbot.TelegramError{Code: 403, Description: "Forbidden"}}
+	bot := testBot(client)
+	cfg := testConfig()
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	if err := TickReminders(context.Background(), bot, db, cfg, time.Date(2026, 7, 31, 6, 1, 0, 0, time.UTC), logger); err != nil {
+		t.Fatalf("TickReminders: %v", err)
+	}
+
+	lines := parseLogLines(t, &buf)
+	failed := findLogLine(lines, "reminder_failed")
+	if failed == nil {
+		t.Fatalf("no reminder_failed log line found; lines: %+v", lines)
+	}
+	if failed["level"] != "WARN" {
+		t.Errorf("level = %v, want WARN (a failure should not log at routine Info level)", failed["level"])
+	}
+	if got, want := failed["event_id"], float64(event.ID); got != want {
+		t.Errorf("event_id = %v, want %v", got, want)
+	}
+	if got, want := failed["user_id"], float64(1); got != want {
+		t.Errorf("user_id = %v, want %v", got, want)
+	}
+	if failed["error"] != "bot_blocked_by_user" {
+		t.Errorf("error = %v, want bot_blocked_by_user", failed["error"])
+	}
+	if got, want := failed["attempts"], float64(1); got != want {
+		t.Errorf("attempts = %v, want %v", got, want)
+	}
+}
+
+// TestTickReminders_LogsEventOccurrenceAdvanced is required audit-trail
+// coverage for event_occurrence_advanced: the exact point where "the bot
+// forgot someone" would show up in the log, since it is where next_occurrence
+// silently rolls forward to the following year.
+func TestTickReminders_LogsEventOccurrenceAdvanced(t *testing.T) {
+	db := testDB(t)
+	offset := 1
+	sendTime := "09:00"
+	// seedUserEventRule creates the event with NextOccurrence = 2026-08-01
+	// (Month=8, Day=1).
+	_, event := seedUserEventRule(t, db, 1, "Asia/Jerusalem", "09:00", &offset, &sendTime, nil)
+
+	client := &fakeBotClient{}
+	bot := testBot(client)
+	cfg := testConfig()
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	// Tick a day after the stored occurrence: next_occurrence (Aug 1) is now
+	// strictly in the past relative to "today" (Aug 2 local), so
+	// TickReminders must recompute and advance it to the following year.
+	if err := TickReminders(context.Background(), bot, db, cfg, time.Date(2026, 8, 2, 6, 1, 0, 0, time.UTC), logger); err != nil {
+		t.Fatalf("TickReminders: %v", err)
+	}
+
+	lines := parseLogLines(t, &buf)
+	advanced := findLogLine(lines, "event_occurrence_advanced")
+	if advanced == nil {
+		t.Fatalf("no event_occurrence_advanced log line found; lines: %+v", lines)
+	}
+	if got, want := advanced["event_id"], float64(event.ID); got != want {
+		t.Errorf("event_id = %v, want %v", got, want)
+	}
+	if got, want := advanced["user_id"], float64(1); got != want {
+		t.Errorf("user_id = %v, want %v", got, want)
+	}
+	if advanced["track"] != "primary" {
+		t.Errorf("track = %v, want primary", advanced["track"])
+	}
+	if advanced["old_next_occurrence"] == nil {
+		t.Error("old_next_occurrence missing from event_occurrence_advanced line")
+	}
+	if advanced["new_next_occurrence"] == nil {
+		t.Error("new_next_occurrence missing from event_occurrence_advanced line")
+	}
+
+	reloaded, err := repo.NewEventRepo(db, 1).GetOwned(context.Background(), event.ID)
+	if err != nil {
+		t.Fatalf("GetOwned: %v", err)
+	}
+	cutoff := time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)
+	if reloaded.NextOccurrence == nil || !reloaded.NextOccurrence.After(cutoff) {
+		t.Errorf("NextOccurrence after advance = %v, want something after %v (next year)", reloaded.NextOccurrence, cutoff)
 	}
 }

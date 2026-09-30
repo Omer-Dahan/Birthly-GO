@@ -10,6 +10,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"strconv"
 	"sync"
 	"time"
@@ -106,12 +107,27 @@ func sendLimiter(ratePerSecond int) *sendRateLimiter {
 // has a photo attached, it's sent via SendPhoto with the reminder text as
 // caption instead of a plain SendMessage — the Python original never sends
 // event.photo_file_id anywhere, so this is new behavior, not a parity port.
-func SendReminder(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, user *models.User, event *models.Event, rule *models.ReminderRule, logID int64, occurrence time.Time, trackCalendarType string, broadcastRatePerSec int) bool {
+//
+// scheduledAt is the fire time this reminder was queued for (used only to
+// compute late_by on a successful send); logger records every terminal
+// outcome (sent/failed) so a successful send is no longer silent in the log.
+func SendReminder(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, user *models.User, event *models.Event, rule *models.ReminderRule, logID int64, occurrence time.Time, trackCalendarType string, broadcastRatePerSec int, scheduledAt time.Time, logger *slog.Logger) bool {
 	notifRepo := repo.NewNotificationRepo(db)
 
 	text := services.RenderReminder(user, event, rule, occurrence, trackCalendarType)
 	kb := ReminderKeyboard(event.ID, user.Language)
 	limiter := sendLimiter(broadcastRatePerSec)
+
+	name := core.FormatName(event.FirstName, event.LastName)
+	track := trackLabel(event, trackCalendarType)
+	var ruleID *int64
+	if rule != nil {
+		ruleID = &rule.ID
+	}
+	logAttrs := func(extra ...any) []any {
+		attrs := reminderLogAttrs(user.ID, event.ID, name, track, occurrence, scheduledAt, ruleID, rule)
+		return append(attrs, extra...)
+	}
 
 	for attempt := 0; attempt < 3; attempt++ {
 		limiter.Acquire()
@@ -132,6 +148,8 @@ func SendReminder(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, user *model
 		}
 		if err == nil {
 			_ = notifRepo.MarkSent(ctx, logID)
+			lateBy := time.Since(scheduledAt)
+			logger.Info("reminder_sent", logAttrs("late_by", lateBy.String())...)
 			return true
 		}
 
@@ -142,6 +160,7 @@ func SendReminder(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, user *model
 				users := repo.NewUserRepo(db)
 				_ = users.SetBotBlockedByUser(ctx, user.ID, true)
 				_ = notifRepo.MarkFailed(ctx, logID, "bot_blocked_by_user")
+				logger.Warn("reminder_failed", logAttrs("error", "bot_blocked_by_user", "attempts", attempt+1)...)
 				return false
 			}
 			if tgErr.Code == 429 && tgErr.ResponseParams != nil {
@@ -151,6 +170,7 @@ func SendReminder(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, user *model
 					continue
 				}
 				_ = notifRepo.MarkFailed(ctx, logID, "RetryAfter after 3 attempts")
+				logger.Warn("reminder_failed", logAttrs("error", "RetryAfter after 3 attempts", "attempts", attempt+1)...)
 				return false
 			}
 		}
@@ -160,6 +180,7 @@ func SendReminder(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, user *model
 			errText = errText[:400]
 		}
 		_ = notifRepo.MarkFailed(ctx, logID, errText)
+		logger.Warn("reminder_failed", logAttrs("error", errText, "attempts", attempt+1)...)
 		return false
 	}
 	return false

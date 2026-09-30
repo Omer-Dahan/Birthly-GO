@@ -242,6 +242,16 @@ func cbImportDo(b *gotgbot.Bot, ctx *ext.Context) error {
 		return sendErr
 	}
 	store.Clear(user.ID)
+	// Replacing a user's events is exactly the "the bot forgot my people"
+	// scenario, so it must leave a trace: how many were imported, and (in
+	// replace mode) how many of the previous set were soft-deleted first.
+	router.LoggerFromContext(ctx).Info("backup_imported",
+		"user_id", user.ID,
+		"mode", actualMode,
+		"imported", result.Imported,
+		"duplicates", result.Duplicates,
+		"deleted", result.Deleted,
+	)
 
 	summary := "✅ " + i18n.T("backup.import_done.title", user.Language, nil) + "\n\n" +
 		"📦 " + i18n.T("backup.import_done.imported", user.Language, map[string]any{"count": result.Imported}) + "\n" +

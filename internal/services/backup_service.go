@@ -343,11 +343,14 @@ func ExportXLSX(ctx context.Context, db repo.DBTX, user *models.User) ([]byte, e
 	return buf.Bytes(), nil
 }
 
-// ImportResult tallies the outcome of DoImport.
+// ImportResult tallies the outcome of DoImport. Deleted is only ever
+// nonzero in "replace" mode: the count of the user's existing events that
+// were soft-deleted to make room for the imported set.
 type ImportResult struct {
 	TotalParsed int      `json:"total_parsed"`
 	Imported    int      `json:"imported"`
 	Duplicates  int      `json:"duplicates"`
+	Deleted     int      `json:"deleted"`
 	Errors      []string `json:"errors"`
 }
 
@@ -397,6 +400,7 @@ func DoImport(ctx context.Context, db repo.DBTX, user *models.User, payload map[
 				return result, err
 			}
 		}
+		result.Deleted = len(existing)
 	}
 
 	existingEvents, err := events.ListNotDeleted(ctx)

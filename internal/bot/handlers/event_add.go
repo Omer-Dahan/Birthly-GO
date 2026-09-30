@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -130,7 +131,7 @@ func msgAddDate(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	db := router.DBFromContext(ctx)
 	maxEvents := router.ConfigFromContext(ctx).MaxEventsPerUser
-	event, limitErr, err := finalizeEvent(context.Background(), db, user, store, parsed.Month, parsed.Day, parsed.Year, core.CalendarTypeGregorian, nil, nil, maxEvents)
+	event, limitErr, err := finalizeEvent(context.Background(), db, user, store, parsed.Month, parsed.Day, parsed.Year, core.CalendarTypeGregorian, nil, nil, maxEvents, router.LoggerFromContext(ctx))
 	if err != nil {
 		return err
 	}
@@ -385,7 +386,7 @@ func cbAddSecondaryAutoNo(b *gotgbot.Bot, ctx *ext.Context) error {
 func finalizeSecondaryAndRespond(b *gotgbot.Bot, ctx *ext.Context, user *models.User, store *fsm.Store, secondaryMonth, secondaryDay *int) error {
 	db := router.DBFromContext(ctx)
 	maxEvents := router.ConfigFromContext(ctx).MaxEventsPerUser
-	event, limitErr, err := finalizeSecondaryFlow(context.Background(), db, user, store, maxEvents, secondaryMonth, secondaryDay)
+	event, limitErr, err := finalizeSecondaryFlow(context.Background(), db, user, store, maxEvents, secondaryMonth, secondaryDay, router.LoggerFromContext(ctx))
 	if err != nil {
 		return err
 	}
@@ -422,7 +423,7 @@ func msgAddSecondaryDate(b *gotgbot.Bot, ctx *ext.Context) error {
 	db := router.DBFromContext(ctx)
 	maxEvents := router.ConfigFromContext(ctx).MaxEventsPerUser
 	month, day := parsed.Month, parsed.Day
-	event, limitErr, err := finalizeSecondaryFlow(context.Background(), db, user, store, maxEvents, &month, &day)
+	event, limitErr, err := finalizeSecondaryFlow(context.Background(), db, user, store, maxEvents, &month, &day, router.LoggerFromContext(ctx))
 	if err != nil {
 		return err
 	}
@@ -438,7 +439,7 @@ func msgAddSecondaryDate(b *gotgbot.Bot, ctx *ext.Context) error {
 // finalizeSecondaryFlow reads the hebrew month/day/year accumulated earlier
 // in the flow back out of FSM data and finalizes the event, optionally with
 // a secondary gregorian date.
-func finalizeSecondaryFlow(ctx context.Context, db repo.DBTX, user *models.User, store *fsm.Store, maxEventsPerUser int, secondaryMonth, secondaryDay *int) (*models.Event, bool, error) {
+func finalizeSecondaryFlow(ctx context.Context, db repo.DBTX, user *models.User, store *fsm.Store, maxEventsPerUser int, secondaryMonth, secondaryDay *int, logger *slog.Logger) (*models.Event, bool, error) {
 	data := store.GetData(user.ID)
 	month, _ := data["heb_month"].(int)
 	day, _ := data["heb_day"].(int)
@@ -446,13 +447,13 @@ func finalizeSecondaryFlow(ctx context.Context, db repo.DBTX, user *models.User,
 	if y, ok := data["heb_year"].(int); ok {
 		year = &y
 	}
-	return finalizeEvent(ctx, db, user, store, month, day, year, core.CalendarTypeHebrew, secondaryMonth, secondaryDay, maxEventsPerUser)
+	return finalizeEvent(ctx, db, user, store, month, day, year, core.CalendarTypeHebrew, secondaryMonth, secondaryDay, maxEventsPerUser, logger)
 }
 
 // finalizeEvent creates the event and clears FSM state. limitErr is true if
 // the user's event limit was reached (caller renders the limit-reached
 // message) — port of event_add.py's _finalize_event.
-func finalizeEvent(ctx context.Context, db repo.DBTX, user *models.User, store *fsm.Store, month, day int, year *int, calendarType string, secondaryMonth, secondaryDay *int, maxEventsPerUser int) (*models.Event, bool, error) {
+func finalizeEvent(ctx context.Context, db repo.DBTX, user *models.User, store *fsm.Store, month, day int, year *int, calendarType string, secondaryMonth, secondaryDay *int, maxEventsPerUser int, logger *slog.Logger) (*models.Event, bool, error) {
 	data := store.GetData(user.ID)
 	firstName, _ := data["first_name"].(string)
 	var lastName *string
@@ -481,7 +482,44 @@ func finalizeEvent(ctx context.Context, db repo.DBTX, user *models.User, store *
 
 	store.Clear(user.ID)
 	store.UpdateData(user.ID, map[string]any{"event_id": event.ID})
+	logEventCreated(ctx, db, logger, user, event)
 	return event, false, nil
+}
+
+// logEventCreated writes the audit-trail line for a newly created event.
+// This is the log line the owner needs to answer "when was this person
+// added, on which calendar, and how many reminders will fire for them".
+// Today's gap is that nothing at all is logged on event creation.
+func logEventCreated(ctx context.Context, db repo.DBTX, logger *slog.Logger, user *models.User, event *models.Event) {
+	ruleCount, err := repo.NewReminderRuleRepo(db, user.ID).CountGlobal(ctx)
+	if err != nil {
+		ruleCount = -1
+	}
+
+	attrs := []any{
+		"user_id", user.ID,
+		"event_id", event.ID,
+		"name", core.FormatName(event.FirstName, event.LastName),
+		"calendar_type", event.CalendarType,
+		"month", event.Month,
+		"day", event.Day,
+		"year", event.Year,
+		"next_occurrence", event.NextOccurrence,
+		"rule_count", ruleCount,
+	}
+	if event.SecondaryMonth != nil && event.SecondaryDay != nil {
+		secCalType := core.CalendarTypeGregorian
+		if event.SecondaryCalendarType != nil {
+			secCalType = *event.SecondaryCalendarType
+		}
+		attrs = append(attrs,
+			"secondary_calendar_type", secCalType,
+			"secondary_month", *event.SecondaryMonth,
+			"secondary_day", *event.SecondaryDay,
+			"secondary_next_occurrence", event.SecondaryNextOccurrence,
+		)
+	}
+	logger.Info("event_created", attrs...)
 }
 
 func renderSavedText(user *models.User, event *models.Event) string {

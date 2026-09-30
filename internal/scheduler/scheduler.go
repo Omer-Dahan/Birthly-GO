@@ -103,8 +103,49 @@ func Build(bot *gotgbot.Bot, db *sql.DB, cfg *config.Config, logger *slog.Logger
 		}
 	}
 
+	if stats, err := loadReminderEngineStats(context.Background(), db); err != nil {
+		logger.Warn("reminder_engine_stats_failed", "error", err)
+	} else {
+		logger.Info("reminder_engine_start",
+			"users_with_events", stats.usersWithEvents,
+			"active_events", stats.activeEvents,
+			"dual_date_events", stats.dualDateEvents,
+			"tick_seconds", cfg.SchedulerTickSeconds,
+			"grace_hours", cfg.ReminderGraceHours,
+			"max_upcoming_days", cfg.MaxUpcomingDays,
+		)
+	}
+
 	logger.Info("scheduler_built", "job_count", len(jobs), "tick_seconds", cfg.SchedulerTickSeconds)
 	return &Scheduler{cron: c}, nil
+}
+
+// reminderEngineStats summarizes the population the reminder engine is
+// responsible for at startup: the one-time line an operator reads to
+// sanity-check "does the bot think it's tracking the right number of
+// people" before watching the per-tick log scroll by.
+type reminderEngineStats struct {
+	usersWithEvents int
+	activeEvents    int
+	dualDateEvents  int
+}
+
+func loadReminderEngineStats(ctx context.Context, db *sql.DB) (reminderEngineStats, error) {
+	var stats reminderEngineStats
+	row := db.QueryRowContext(ctx, `
+		SELECT
+			COUNT(DISTINCT user_id),
+			COUNT(*),
+			SUM(CASE WHEN secondary_month IS NOT NULL THEN 1 ELSE 0 END)
+		FROM events
+		WHERE is_active = 1 AND deleted_at IS NULL
+	`)
+	var dualDate sql.NullInt64
+	if err := row.Scan(&stats.usersWithEvents, &stats.activeEvents, &dualDate); err != nil {
+		return stats, err
+	}
+	stats.dualDateEvents = int(dualDate.Int64)
+	return stats, nil
 }
 
 // Start begins running scheduled jobs in the background.

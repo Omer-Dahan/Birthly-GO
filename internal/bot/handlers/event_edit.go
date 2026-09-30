@@ -331,6 +331,12 @@ func applyField(b *gotgbot.Bot, ctx *ext.Context, field string, value *string) e
 		}
 		return err
 	}
+	router.LoggerFromContext(ctx).Info("event_updated",
+		"user_id", user.ID,
+		"event_id", eventID,
+		"field", field,
+		"cleared", value == nil,
+	)
 
 	store.SetState(user.ID, fsm.EditEventChoosingField)
 	if err := renderMoreDetails(context.Background(), b, ctx.CallbackQuery, db, user, eventID); err != nil {
@@ -437,6 +443,12 @@ func msgFieldValue(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 		return err
 	}
+	router.LoggerFromContext(ctx).Info("event_updated",
+		"user_id", user.ID,
+		"event_id", eventID,
+		"field", field,
+		"cleared", false,
+	)
 
 	store.SetState(user.ID, fsm.EditEventChoosingField)
 	name := core.Esc(core.FormatName(updated.FirstName, updated.LastName))
@@ -489,6 +501,12 @@ func msgFieldPhoto(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 		return err
 	}
+	router.LoggerFromContext(ctx).Info("event_updated",
+		"user_id", user.ID,
+		"event_id", eventID,
+		"field", "photo",
+		"cleared", false,
+	)
 
 	store.SetState(user.ID, fsm.EditEventChoosingField)
 	name := core.Esc(core.FormatName(updated.FirstName, updated.LastName))

@@ -38,6 +38,7 @@ const (
 	DataKeyFSM    = "fsm"
 	DataKeyUser   = "user"
 	DataKeyConfig = "config"
+	DataKeyLogger = "logger"
 )
 
 // simpleHandler adapts a plain check+handle function pair to ext.Handler,
@@ -118,16 +119,27 @@ func FSMFromContext(ctx *ext.Context) *fsm.Store {
 	return s
 }
 
-// configHandler injects the shared *config.Config into ctx.Data. Python
-// handlers reach the same values via the `settings` module-level singleton
-// (app.config.settings imported directly); Go has no such global by
-// convention, so this is the equivalent mechanism to db/fsm above.
-func configHandler(cfg *config.Config) ext.Handler {
+// configHandler injects the shared *config.Config and *slog.Logger into
+// ctx.Data, in the same handler. This MUST stay a single handler: gotgbot's
+// dispatcher (ext/dispatcher.go, iterateOverHandlerGroups) runs handlers
+// within a group in order and breaks to the next group as soon as one
+// handler matches (CheckUpdate true) and returns a nil error. Since both of
+// these use check: always, splitting them into two "always true" handlers
+// registered in the same group would mean only the first one ever runs; the
+// second would silently never fire on any update. Keep both assignments
+// here, in one handler, so that can't happen again.
+//
+// Python handlers reach the equivalent config value via the `settings`
+// module-level singleton (app.config.settings imported directly); Go has no
+// such global by convention, so this is the mechanism for making both
+// config and logger reachable the same way db/fsm are.
+func configHandler(cfg *config.Config, logger *slog.Logger) ext.Handler {
 	return simpleHandler{
 		name:  "mw_config",
 		check: always,
 		run: func(b *gotgbot.Bot, ctx *ext.Context) error {
 			ctx.Data[DataKeyConfig] = cfg
+			ctx.Data[DataKeyLogger] = logger
 			return nil
 		},
 	}
@@ -137,6 +149,19 @@ func configHandler(cfg *config.Config) ext.Handler {
 func ConfigFromContext(ctx *ext.Context) *config.Config {
 	c, _ := ctx.Data[DataKeyConfig].(*config.Config)
 	return c
+}
+
+// LoggerFromContext fetches the shared logger attached by configHandler,
+// falling back to slog.Default() so a handler tested with a bare ext.Context
+// (no middleware chain run) never panics on a nil logger. slog.Default() is
+// itself set to the process logger by internal/logging.Setup, so even this
+// fallback path lands in the configured file+stdout sinks, not bare stderr.
+func LoggerFromContext(ctx *ext.Context) *slog.Logger {
+	l, _ := ctx.Data[DataKeyLogger].(*slog.Logger)
+	if l == nil {
+		return slog.Default()
+	}
+	return l
 }
 
 // userHandler loads (or creates) the DB user for this update and

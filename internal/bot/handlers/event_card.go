@@ -96,13 +96,20 @@ func cbEventMute(b *gotgbot.Bot, ctx *ext.Context) error {
 	db := router.DBFromContext(ctx)
 	eventID := mustEventID(ctx)
 
-	if _, err := services.ToggleMute(context.Background(), db, user, eventID); err != nil {
+	toggled, err := services.ToggleMute(context.Background(), db, user, eventID)
+	if err != nil {
 		if isNotFound(err) {
 			NotFoundAlert(b, ctx.CallbackQuery, user.Language)
 			return nil
 		}
 		return err
 	}
+	router.LoggerFromContext(ctx).Info("event_muted",
+		"user_id", user.ID,
+		"event_id", eventID,
+		"name", core.FormatName(toggled.FirstName, toggled.LastName),
+		"is_active", toggled.IsActive,
+	)
 
 	text, kb, err := RenderCard(context.Background(), db, user, eventID)
 	if err != nil {
@@ -155,6 +162,11 @@ func cbEventDeleteConfirmed(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 		return err
 	}
+	router.LoggerFromContext(ctx).Info("event_deleted",
+		"user_id", user.ID,
+		"event_id", eventID,
+		"name", core.FormatName(event.FirstName, event.LastName),
+	)
 
 	name := core.Esc(core.FormatName(event.FirstName, event.LastName))
 	kw := map[string]any{"name": name}
@@ -182,6 +194,11 @@ func cbEventRestore(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 		return err
 	}
+	router.LoggerFromContext(ctx).Info("event_restored",
+		"user_id", user.ID,
+		"event_id", eventID,
+		"name", core.FormatName(event.FirstName, event.LastName),
+	)
 
 	name := core.Esc(core.FormatName(event.FirstName, event.LastName))
 	kw := map[string]any{"name": name}

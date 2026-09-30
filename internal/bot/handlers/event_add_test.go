@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -38,7 +41,7 @@ func TestFinalizeEvent_CreatesEventAndClearsState(t *testing.T) {
 	fsmStore.SetState(user.ID, fsm.AddEventName)
 	fsmStore.UpdateData(user.ID, map[string]any{"first_name": "Dana", "last_name": "Cohen"})
 
-	event, limitErr, err := finalizeEvent(ctx, db, user, fsmStore, 3, 15, nil, "gregorian", nil, nil, 1000)
+	event, limitErr, err := finalizeEvent(ctx, db, user, fsmStore, 3, 15, nil, "gregorian", nil, nil, 1000, testLogger())
 	if err != nil {
 		t.Fatalf("finalizeEvent: %v", err)
 	}
@@ -100,7 +103,7 @@ func TestMsgAddName_ThenFinalize_LastNameSurvivesEndToEnd(t *testing.T) {
 		t.Fatalf("msgAddName: %v", err)
 	}
 
-	event, limitErr, err := finalizeEvent(ctx, db, user, fsmStore, 3, 15, nil, "gregorian", nil, nil, 1000)
+	event, limitErr, err := finalizeEvent(ctx, db, user, fsmStore, 3, 15, nil, "gregorian", nil, nil, 1000, testLogger())
 	if err != nil {
 		t.Fatalf("finalizeEvent: %v", err)
 	}
@@ -143,7 +146,7 @@ func TestFinalizeEvent_LastNameFromSplitNameSurvives(t *testing.T) {
 	}
 	fsmStore.UpdateData(user.ID, map[string]any{"first_name": firstName, "last_name": lastName})
 
-	event, limitErr, err := finalizeEvent(ctx, db, user, fsmStore, 3, 15, nil, "gregorian", nil, nil, 1000)
+	event, limitErr, err := finalizeEvent(ctx, db, user, fsmStore, 3, 15, nil, "gregorian", nil, nil, 1000, testLogger())
 	if err != nil {
 		t.Fatalf("finalizeEvent: %v", err)
 	}
@@ -181,7 +184,7 @@ func TestFinalizeEvent_NoLastNameStaysNil(t *testing.T) {
 	}
 	fsmStore.UpdateData(user.ID, map[string]any{"first_name": firstName, "last_name": lastName})
 
-	event, _, err := finalizeEvent(ctx, db, user, fsmStore, 3, 15, nil, "gregorian", nil, nil, 1000)
+	event, _, err := finalizeEvent(ctx, db, user, fsmStore, 3, 15, nil, "gregorian", nil, nil, 1000, testLogger())
 	if err != nil {
 		t.Fatalf("finalizeEvent: %v", err)
 	}
@@ -210,7 +213,7 @@ func TestFinalizeEvent_LimitReached(t *testing.T) {
 		t.Fatalf("seed event: %v", err)
 	}
 
-	_, limitErr, err := finalizeEvent(ctx, db, user, fsmStore, 2, 2, nil, "gregorian", nil, nil, 1)
+	_, limitErr, err := finalizeEvent(ctx, db, user, fsmStore, 2, 2, nil, "gregorian", nil, nil, 1, testLogger())
 	if err != nil {
 		t.Fatalf("finalizeEvent: %v", err)
 	}
@@ -299,7 +302,7 @@ func TestFinalizeSecondaryFlow_HebrewPrimaryWithGregorianSecondary(t *testing.T)
 	})
 
 	secMonth, secDay := 3, 15
-	event, limitErr, err := finalizeSecondaryFlow(ctx, db, user, fsmStore, 1000, &secMonth, &secDay)
+	event, limitErr, err := finalizeSecondaryFlow(ctx, db, user, fsmStore, 1000, &secMonth, &secDay, testLogger())
 	if err != nil {
 		t.Fatalf("finalizeSecondaryFlow: %v", err)
 	}
@@ -357,7 +360,7 @@ func TestFinalizeSecondaryFlow_NoSecondaryLeavesFieldsNil(t *testing.T) {
 		"first_name": "Dana", "heb_month": 7, "heb_day": 1,
 	})
 
-	event, limitErr, err := finalizeSecondaryFlow(ctx, db, user, fsmStore, 1000, nil, nil)
+	event, limitErr, err := finalizeSecondaryFlow(ctx, db, user, fsmStore, 1000, nil, nil, testLogger())
 	if err != nil {
 		t.Fatalf("finalizeSecondaryFlow: %v", err)
 	}
@@ -616,5 +619,74 @@ func TestCbAddNoYear_HebYearBranchUnaffected(t *testing.T) {
 	state, ok := fsmStore.GetState(user.ID)
 	if !ok || state != fsm.AddEventSecondaryPrompt {
 		t.Errorf("state = %q, ok=%v, want AddEventSecondaryPrompt", state, ok)
+	}
+}
+
+// TestFinalizeEvent_LogsEventCreated is the regression test for the audit
+// trail gap reported against the running bot: event creation wrote nothing
+// to the log, so journalctl alone could never answer "when was this person
+// added, on which calendar, and how many reminders will fire for them".
+// This asserts the event_created line carries exactly those fields.
+func TestFinalizeEvent_LogsEventCreated(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer db.Close()
+
+	user, err := services.GetOrCreateUser(ctx, db, 3001, nil, "Dana", nil, false)
+	if err != nil {
+		t.Fatalf("GetOrCreateUser: %v", err)
+	}
+
+	fsmStore := fsm.NewStore(0, 200)
+	fsmStore.SetState(user.ID, fsm.AddEventName)
+	fsmStore.UpdateData(user.ID, map[string]any{"first_name": "Dana", "last_name": "Cohen"})
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	event, limitErr, err := finalizeEvent(ctx, db, user, fsmStore, 3, 15, nil, "gregorian", nil, nil, 1000, logger)
+	if err != nil {
+		t.Fatalf("finalizeEvent: %v", err)
+	}
+	if limitErr {
+		t.Fatal("unexpected limitErr=true")
+	}
+
+	var line map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+		t.Fatalf("log output is not valid JSON: %v\noutput: %s", err, buf.String())
+	}
+
+	if line["msg"] != "event_created" {
+		t.Fatalf("msg = %v, want event_created (full line: %s)", line["msg"], buf.String())
+	}
+	if got, want := line["event_id"], float64(event.ID); got != want {
+		t.Errorf("event_id = %v, want %v", got, want)
+	}
+	if got, want := line["user_id"], float64(user.ID); got != want {
+		t.Errorf("user_id = %v, want %v", got, want)
+	}
+	if line["name"] != "Dana Cohen" {
+		t.Errorf("name = %v, want %q", line["name"], "Dana Cohen")
+	}
+	if line["calendar_type"] != "gregorian" {
+		t.Errorf("calendar_type = %v, want gregorian", line["calendar_type"])
+	}
+	if got, want := line["month"], float64(3); got != want {
+		t.Errorf("month = %v, want %v", got, want)
+	}
+	if got, want := line["day"], float64(15); got != want {
+		t.Errorf("day = %v, want %v", got, want)
+	}
+	if line["next_occurrence"] == nil {
+		t.Error("next_occurrence missing from log line")
+	}
+	// A brand-new user starts with the two default global rules (day-before +
+	// day-of, seeded by GetOrCreateUser) and no per-event override yet.
+	if got, want := line["rule_count"], float64(2); got != want {
+		t.Errorf("rule_count = %v, want %v", got, want)
 	}
 }

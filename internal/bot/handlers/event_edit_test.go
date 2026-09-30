@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"log/slog"
 	"path/filepath"
 	"testing"
 	"time"
@@ -207,5 +210,75 @@ func TestFieldHasValue(t *testing.T) {
 	}
 	if !fieldHasValue(db, user, event.ID, "phone") {
 		t.Error("expected phone to have a value after setting it")
+	}
+}
+
+// TestApplyField_LogsEventUpdated is required audit-trail coverage for the
+// event_updated log line (internal/bot/handlers/event_edit.go's
+// applyField): editing a field must leave a trace of which field changed
+// and whether it was cleared or set.
+func TestApplyField_LogsEventUpdated(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer db.Close()
+
+	user, err := services.GetOrCreateUser(ctx, db, 4010, nil, "U", nil, false)
+	if err != nil {
+		t.Fatalf("GetOrCreateUser: %v", err)
+	}
+	event, err := services.CreateMinimalEvent(ctx, db, user, services.NewEventInput{FirstName: "Dana", Month: 3, Day: 15}, 1000)
+	if err != nil {
+		t.Fatalf("CreateMinimalEvent: %v", err)
+	}
+
+	fsmStore := fsm.NewStore(time.Hour, 200)
+	fsmStore.SetState(user.ID, fsm.EditEventEnteringValue)
+	fsmStore.UpdateData(user.ID, map[string]any{"event_id": event.ID})
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	gctx := &ext.Context{
+		Update: &gotgbot.Update{CallbackQuery: &gotgbot.CallbackQuery{
+			Id:      "cq1",
+			Message: gotgbot.Message{MessageId: 42, Chat: gotgbot.Chat{Id: 555}},
+		}},
+		Data: map[string]any{
+			router.DataKeyUser:   user,
+			router.DataKeyDB:     db,
+			router.DataKeyFSM:    fsmStore,
+			router.DataKeyLogger: logger,
+		},
+		EffectiveUser: &gotgbot.User{Id: user.ID},
+		EffectiveChat: &gotgbot.Chat{Id: 555},
+	}
+	bot := testEditBot(&fakeEditClient{})
+
+	phone := "0501234567"
+	if err := applyField(bot, gctx, "phone", &phone); err != nil {
+		t.Fatalf("applyField: %v", err)
+	}
+
+	var line map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
+		t.Fatalf("log output is not valid JSON: %v\noutput: %s", err, buf.String())
+	}
+	if line["msg"] != "event_updated" {
+		t.Fatalf("msg = %v, want event_updated (full line: %s)", line["msg"], buf.String())
+	}
+	if got, want := line["event_id"], float64(event.ID); got != want {
+		t.Errorf("event_id = %v, want %v", got, want)
+	}
+	if got, want := line["user_id"], float64(user.ID); got != want {
+		t.Errorf("user_id = %v, want %v", got, want)
+	}
+	if line["field"] != "phone" {
+		t.Errorf("field = %v, want phone", line["field"])
+	}
+	if line["cleared"] != false {
+		t.Errorf("cleared = %v, want false", line["cleared"])
 	}
 }

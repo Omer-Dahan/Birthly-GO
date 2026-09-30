@@ -57,7 +57,14 @@ func Setup(cfg *config.Config) (*slog.Logger, error) {
 		slog.NewTextHandler(os.Stdout, opts),
 	}
 
-	return slog.New(fanOutHandler{handlers: handlers}), nil
+	logger := slog.New(fanOutHandler{handlers: handlers})
+	// Also install as the package-level default, so any slog.Default() call
+	// (a handler tested without the middleware chain, or any future code
+	// that forgets to thread the logger through explicitly) still lands in
+	// the configured file+stdout sinks instead of slog's own bare stderr
+	// default.
+	slog.SetDefault(logger)
+	return logger, nil
 }
 
 // maxSizeMB converts LOG_MAX_BYTES (bytes, matching Python's
