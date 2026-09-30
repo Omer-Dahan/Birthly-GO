@@ -712,6 +712,72 @@ func TestRecoverPending_WithinGraceSentSuccessfully(t *testing.T) {
 	}
 }
 
+// TestRecoverPending_RuleGoneOrDisabledSkipped verifies that a pending log
+// within grace is NOT sent once its rule has been deleted (rule_id becomes
+// NULL via ON DELETE SET NULL) or disabled. TickReminders only ever fires
+// enabled rules, and a deleted rule reaches SendReminder as nil, which
+// renders as a day-of ("today is ...") message regardless of the real
+// offset, so the user would get a wrongly worded reminder they turned off.
+func TestRecoverPending_RuleGoneOrDisabledSkipped(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(t *testing.T, db *sql.DB, userID, ruleID int64)
+	}{
+		{"deleted", func(t *testing.T, db *sql.DB, userID, ruleID int64) {
+			if err := repo.NewReminderRuleRepo(db, userID).Delete(context.Background(), ruleID); err != nil {
+				t.Fatalf("Delete rule: %v", err)
+			}
+		}},
+		{"disabled", func(t *testing.T, db *sql.DB, userID, ruleID int64) {
+			if _, err := repo.NewReminderRuleRepo(db, userID).Toggle(context.Background(), ruleID); err != nil {
+				t.Fatalf("Toggle rule: %v", err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := testDB(t)
+			offset := 7
+			sendTime := "09:00"
+			user, event := seedUserEventRule(t, db, 1, "Asia/Jerusalem", "09:00", &offset, &sendTime, nil)
+
+			ctx := context.Background()
+			notifRepo := repo.NewNotificationRepo(db)
+			rules, err := notifRepo.GetRulesForUser(ctx, user.ID)
+			if err != nil || len(rules) != 1 {
+				t.Fatalf("GetRulesForUser: %v (n=%d)", err, len(rules))
+			}
+			ruleID := rules[0].ID
+
+			// Queued 10 minutes ago for the 7-days-before reminder, then the
+			// process died before sending it.
+			occDate := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+			schedAt := time.Date(2026, 7, 25, 6, 0, 0, 0, time.UTC)
+			pendingLog, err := notifRepo.CreatePending(ctx, user.ID, event.ID, &ruleID, occDate, schedAt)
+			if err != nil || pendingLog == nil {
+				t.Fatalf("CreatePending: %v", err)
+			}
+
+			tc.mutate(t, db, user.ID, ruleID)
+
+			client := &fakeBotClient{}
+			if err := RecoverPending(ctx, testBot(client), db, testConfig(), time.Date(2026, 7, 25, 6, 10, 0, 0, time.UTC), testLogger()); err != nil {
+				t.Fatalf("RecoverPending: %v", err)
+			}
+			if client.sendCount() != 0 {
+				t.Fatalf("sendCount = %d, want 0 (rule %s)", client.sendCount(), tc.name)
+			}
+
+			var status string
+			if err := db.QueryRow(`SELECT status FROM notifications_log WHERE id = ?`, pendingLog.ID).Scan(&status); err != nil {
+				t.Fatalf("query status: %v", err)
+			}
+			if status != models.NotificationStatusSkipped {
+				t.Errorf("status = %q, want skipped", status)
+			}
+		})
+	}
+}
+
 // TestTickReminders_NegativeTimezoneWindow verifies that users in negative UTC
 // timezones (e.g. America/Los_Angeles UTC-7) are correctly queried and processed
 // even when nowUTC has crossed into the next calendar day.

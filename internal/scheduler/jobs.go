@@ -130,10 +130,18 @@ func RecoverPending(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *conf
 			continue
 		}
 
+		// Only recover a log whose rule still exists and is enabled, the same
+		// filter TickReminders applies. A deleted rule leaves rule_id NULL
+		// (ON DELETE SET NULL), and sending with a nil rule would render the
+		// message as a day-of reminder whatever its real offset was.
 		var rule *models.ReminderRule
 		if log.RuleID != nil {
-			ruleRepo := repo.NewReminderRuleRepo(db, user.ID)
-			rule, _ = ruleRepo.GetOwned(ctx, *log.RuleID)
+			rule, err = repo.NewReminderRuleRepo(db, user.ID).GetOwned(ctx, *log.RuleID)
+		}
+		if err != nil || rule == nil || !rule.Enabled {
+			_ = notifRepo.MarkSkipped(ctx, log.ID)
+			logger.Warn("recover_pending_skipped_rule", "log_id", log.ID, "event_id", log.EventID, "rule_id", log.RuleID)
+			continue
 		}
 
 		SendReminder(ctx, bot, db, user, event, rule, log.ID, log.OccurrenceDate, resolveTrackCalendarType(event, log.OccurrenceDate), cfg.BroadcastRatePerSec)
