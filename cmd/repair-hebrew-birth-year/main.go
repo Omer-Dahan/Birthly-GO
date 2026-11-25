@@ -33,15 +33,15 @@ func run(args []string) error {
 		return err
 	}
 
-	// store.Open runs migrations and would create an empty database for a
-	// mistyped path, so the file must already exist.
+	// Friendly early message; OpenExisting below is the real guard (it cannot
+	// create a file, so a path that vanishes after this check still fails).
 	if st, err := os.Stat(*dbPath); err != nil {
 		return fmt.Errorf("database %s does not exist or is unreadable (refusing to create one): %w", *dbPath, err)
 	} else if st.IsDir() {
 		return fmt.Errorf("database path %s is a directory", *dbPath)
 	}
 
-	db, err := store.Open(*dbPath)
+	db, err := store.OpenExisting(*dbPath)
 	if err != nil {
 		return fmt.Errorf("opening database at %s: %w", *dbPath, err)
 	}

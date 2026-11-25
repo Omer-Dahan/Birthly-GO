@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"birthly/internal/store"
 )
 
 func TestRunRefusesMissingDatabase(t *testing.T) {
@@ -16,6 +18,18 @@ func TestRunRefusesMissingDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(entries) != 0 {
+		t.Fatalf("files were created: %v", entries)
+	}
+}
+
+func TestOpenExistingNeverCreates(t *testing.T) {
+	dir := t.TempDir()
+	if db, err := store.OpenExisting(filepath.Join(dir, "gone.db")); err == nil {
+		db.Close()
+		t.Fatal("expected error opening a missing database")
+	}
+	entries, _ := os.ReadDir(dir)
 	if len(entries) != 0 {
 		t.Fatalf("files were created: %v", entries)
 	}
