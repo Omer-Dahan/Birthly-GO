@@ -24,10 +24,23 @@ func testLogger() *slog.Logger {
 type fakeEditClient struct {
 	editErr   error
 	editCalls int
+	sent      []string
+}
+
+func (f *fakeEditClient) sentContains(text string) bool {
+	for _, s := range f.sent {
+		if s == text {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fakeEditClient) RequestWithContext(ctx context.Context, token, method string, params map[string]any, opts *gotgbot.RequestOpts) (json.RawMessage, error) {
 	if method == "sendMessage" {
+		if txt, ok := params["text"].(string); ok {
+			f.sent = append(f.sent, txt)
+		}
 		return json.Marshal(gotgbot.Message{MessageId: 2, Date: int64(time.Now().Unix())})
 	}
 	if method != "editMessageText" {

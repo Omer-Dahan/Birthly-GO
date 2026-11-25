@@ -211,7 +211,7 @@ func cbFieldPick(b *gotgbot.Bot, ctx *ext.Context) error {
 		return err
 	}
 
-	store.UpdateData(user.ID, map[string]any{"editing_field": field})
+	store.UpdateData(user.ID, map[string]any{"editing_field": field, "prompt_event_id": eventID})
 	if field == "year" {
 		// The year the user is looking at; the write only lands if it is
 		// still the stored year.
@@ -538,6 +538,18 @@ func anchorHebrewYear(event *models.Event, raw string, year int, user *models.Us
 	return year
 }
 
+// promptMatchesEvent reports whether the open field prompt was asked for the
+// event now being edited.
+func promptMatchesEvent(data map[string]any, eventID int64) bool {
+	id, ok := data["prompt_event_id"].(int64)
+	return ok && id == eventID
+}
+
+func refuseStalePrompt(b *gotgbot.Bot, ctx *ext.Context, user *models.User) error {
+	_, err := ctx.EffectiveMessage.Reply(b, i18n.T("edit.stale_prompt", user.Language, nil), nil)
+	return err
+}
+
 func msgFieldValue(b *gotgbot.Bot, ctx *ext.Context) error {
 	user := User(ctx)
 	db := router.DBFromContext(ctx)
@@ -551,6 +563,9 @@ func msgFieldValue(b *gotgbot.Bot, ctx *ext.Context) error {
 	eventID, hasEventID := fsmEventID(store, user.ID)
 	if field == "" || !hasEventID || field == "photo" {
 		return ext.ContinueGroups
+	}
+	if !promptMatchesEvent(data, eventID) {
+		return refuseStalePrompt(b, ctx, user)
 	}
 
 	raw := ctx.EffectiveMessage.Text
@@ -664,6 +679,9 @@ func msgFieldPhoto(b *gotgbot.Bot, ctx *ext.Context) error {
 	eventID, hasEventID := fsmEventID(store, user.ID)
 	if field != "photo" || !hasEventID {
 		return ext.ContinueGroups
+	}
+	if !promptMatchesEvent(data, eventID) {
+		return refuseStalePrompt(b, ctx, user)
 	}
 
 	photos := ctx.EffectiveMessage.Photo

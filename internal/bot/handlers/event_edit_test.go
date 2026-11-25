@@ -144,7 +144,7 @@ func TestMsgFieldPhoto_PersistsLargestPhotoSize(t *testing.T) {
 
 	fsmStore := fsm.NewStore(time.Hour, 200)
 	fsmStore.SetState(user.ID, fsm.EditEventEnteringValue)
-	fsmStore.UpdateData(user.ID, map[string]any{"editing_field": "photo", "event_id": event.ID})
+	fsmStore.UpdateData(user.ID, map[string]any{"editing_field": "photo", "event_id": event.ID, "prompt_event_id": event.ID})
 
 	msg := &gotgbot.Message{
 		Chat: gotgbot.Chat{Id: user.ID},

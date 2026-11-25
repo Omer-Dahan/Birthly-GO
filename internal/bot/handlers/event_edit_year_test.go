@@ -152,7 +152,7 @@ func TestEditFlow_HebrewYearKeepsStoredGregorianDate(t *testing.T) {
 			}
 			fsmStore := fsm.NewStore(time.Hour, 200)
 			fsmStore.SetState(user.ID, fsm.EditEventEnteringValue)
-			fsmStore.UpdateData(user.ID, map[string]any{"event_id": event.ID, "editing_field": "year"})
+			fsmStore.UpdateData(user.ID, map[string]any{"event_id": event.ID, "editing_field": "year", "prompt_event_id": event.ID})
 			bot := testEditBot(&fakeEditClient{})
 			if err := msgFieldValue(bot, editYearCtx(t, db, user.ID, fsmStore, "", tc.input, user)); err != nil {
 				t.Fatalf("msgFieldValue: %v", err)
@@ -316,3 +316,57 @@ func TestEditFlow_StaleClearButtonCannotWipeOtherEvent(t *testing.T) {
 }
 
 func intPtr(v int) *int { return &v }
+
+func TestEditFlow_TextReplyForOldPromptRefusedOnOtherEvent(t *testing.T) {
+	if err := i18n.LoadLocales(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	user, err := services.GetOrCreateUser(ctx, db, 4103, nil, "U", nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evA, err := services.CreateMinimalEvent(ctx, db, user, services.NewEventInput{FirstName: "A", Month: 3, Day: 15}, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evB, err := services.CreateMinimalEvent(ctx, db, user, services.NewEventInput{FirstName: "B", Month: 5, Day: 6}, 1001)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fsmStore := fsm.NewStore(time.Hour, 200)
+	fsmStore.SetState(user.ID, fsm.EditEventChoosingField)
+	fsmStore.UpdateData(user.ID, map[string]any{"event_id": evA.ID})
+	client := &fakeEditClient{}
+	bot := testEditBot(client)
+
+	// A's year prompt opens, then the flow switches to B without leaving the state.
+	if err := cbFieldPick(bot, editYearCtx(t, db, user.ID, fsmStore, "ev:field:"+keyboards.FieldPickValue("year", evA.ID), "", user)); err != nil {
+		t.Fatal(err)
+	}
+	fsmStore.UpdateData(user.ID, map[string]any{"event_id": evB.ID})
+
+	if err := msgFieldValue(bot, editYearCtx(t, db, user.ID, fsmStore, "", "1990", user)); err != nil {
+		t.Fatalf("msgFieldValue: %v", err)
+	}
+	for _, ev := range []*models.Event{evA, evB} {
+		got, err := services.GetOwnedEvent(ctx, db, user, ev.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Year != nil {
+			t.Fatalf("event %d got year %d from a stale prompt", ev.ID, *got.Year)
+		}
+	}
+	if state, _ := fsmStore.GetState(user.ID); state != fsm.EditEventEnteringValue {
+		t.Fatalf("state = %q, want unchanged", state)
+	}
+	if !client.sentContains(i18n.T("edit.stale_prompt", user.Language, nil)) {
+		t.Fatal("user did not get the refusal")
+	}
+}

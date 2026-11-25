@@ -11,6 +11,7 @@
   "error.generic": "😕 Something went wrong. Try again in a moment.",
   "error.generic_with_code": "😕 Something went wrong. Try again in a moment. (code: {code})",
   "error.not_found": "This item no longer exists.",
+  "edit.stale_prompt": "That prompt was for a different event. Please reopen the edit and try again.",
   "error.conflict": "This event was changed meanwhile. Open it again and retry.",
   "error.rate_limit": "Whoa, slow down a bit 😅",
   "error.too_long": "That's too long · up to {max} characters.",
