@@ -44,21 +44,21 @@ func seedProvable(t *testing.T, path string) {
 	}
 }
 
-func TestApplyWithoutConfirmCountFails(t *testing.T) {
+func TestApplyWithoutIDsFails(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "x.db")
 	seedProvable(t, dbPath)
 	bk := filepath.Join(t.TempDir(), "bk")
 	if err := run([]string{"--db-path", dbPath, "--backup-dir", bk, "--apply"}); err == nil {
-		t.Fatal("expected error without --confirm-count")
+		t.Fatal("expected error without --ids")
 	}
-	if err := run([]string{"--db-path", dbPath, "--backup-dir", bk, "--apply", "--confirm-count", "5"}); err == nil {
-		t.Fatal("expected error with a wrong --confirm-count")
+	if err := run([]string{"--db-path", dbPath, "--backup-dir", bk, "--apply", "--ids", "99"}); err == nil {
+		t.Fatal("expected error naming a non-candidate id")
 	}
 	if _, err := os.Stat(bk); err == nil {
 		t.Fatal("backup dir created before confirmation")
 	}
-	if err := run([]string{"--db-path", dbPath, "--backup-dir", bk, "--apply", "--confirm-count", "1"}); err != nil {
+	if err := run([]string{"--db-path", dbPath, "--backup-dir", bk, "--apply", "--ids", "1"}); err != nil {
 		t.Fatalf("confirmed apply failed: %v", err)
 	}
 }
@@ -68,7 +68,7 @@ func TestApplySurvivesInputInsideBackupDir(t *testing.T) {
 	// Named like a backup and oldest, so pruning would pick it first.
 	dbPath := filepath.Join(dir, "birthly_hebyear_20000101_000000.db")
 	seedProvable(t, dbPath)
-	if err := run([]string{"--db-path", dbPath, "--backup-dir", dir, "--apply", "--confirm-count", "1"}); err == nil {
+	if err := run([]string{"--db-path", dbPath, "--backup-dir", dir, "--apply", "--ids", "1"}); err == nil {
 		t.Fatal("expected refusal of a backup dir containing the database")
 	}
 	if _, err := os.Stat(dbPath); err != nil {
@@ -86,7 +86,7 @@ func TestApplyInputSurvivesPruningInSeparateDir(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := run([]string{"--db-path", dbPath, "--backup-dir", bk, "--apply", "--confirm-count", "1"}); err != nil {
+	if err := run([]string{"--db-path", dbPath, "--backup-dir", bk, "--apply", "--ids", "1"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(dbPath); err != nil {
@@ -118,5 +118,27 @@ func TestOpenExistingNeverCreates(t *testing.T) {
 	entries, _ := os.ReadDir(dir)
 	if len(entries) != 0 {
 		t.Fatalf("files were created: %v", entries)
+	}
+}
+
+func TestForeignDatabaseInBackupDirSurvives(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "x.db")
+	seedProvable(t, dbPath)
+	bk := t.TempDir()
+	foreign := filepath.Join(bk, "birthly_hebyear_20000101_000000.db")
+	if err := os.WriteFile(foreign, []byte("someone else's database"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= backupRetention+2; i++ {
+		name := filepath.Join(bk, "birthly_hebyear_2001010"+string(rune('0'+i%10))+"_000000.db")
+		if err := os.WriteFile(name, []byte("foreign"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := run([]string{"--db-path", dbPath, "--backup-dir", bk, "--apply", "--ids", "1"}); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(foreign); err != nil || string(b) != "someone else's database" {
+		t.Fatalf("foreign database was touched: %v", err)
 	}
 }

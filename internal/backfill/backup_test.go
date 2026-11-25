@@ -30,8 +30,8 @@ func TestBackup_CreatesSnapshotAndPrunes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
-	if len(entries) != 7 {
-		t.Errorf("backup dir has %d files, want 7 (retention)", len(entries))
+	if n := countDB(entries); n != 7 {
+		t.Errorf("backup dir has %d snapshots, want 7 (retention)", n)
 	}
 	if _, err := os.Stat(last); err != nil {
 		t.Errorf("newest snapshot should survive retention pruning: %v", err)
@@ -65,8 +65,8 @@ func TestBackup_DistinctPrefixesHaveIndependentRetention(t *testing.T) {
 		t.Fatalf("ReadDir: %v", err)
 	}
 	// Retention of 1 for each prefix, applied independently, one survivor each.
-	if len(entries) != 2 {
-		t.Errorf("backup dir has %d files, want 2 (one survivor per prefix)", len(entries))
+	if n := countDB(entries); n != 2 {
+		t.Errorf("backup dir has %d snapshots, want 2 (one survivor per prefix)", n)
 	}
 }
 
@@ -88,4 +88,15 @@ func TestBackup_NeverPrunesProtectedFile(t *testing.T) {
 	if _, err := os.Stat(input); err != nil {
 		t.Fatalf("protected input was pruned: %v", err)
 	}
+}
+
+// countDB counts snapshot files, ignoring the ownership markers beside them.
+func countDB(entries []os.DirEntry) int {
+	n := 0
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) == ".db" {
+			n++
+		}
+	}
+	return n
 }

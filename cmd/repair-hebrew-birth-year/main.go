@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,7 +32,7 @@ func run(args []string) error {
 	dbPath := fs.String("db-path", "data/birthly.db", "path to the SQLite database")
 	apply := fs.Bool("apply", false, "write the repairs (default is dry-run)")
 	backupDir := fs.String("backup-dir", "data/backups", "directory for the pre-apply backup snapshot")
-	confirm := fs.Int("confirm-count", -1, "with --apply: the number of events the dry-run reported (must match the plan exactly)")
+	idsFlag := fs.String("ids", "", "with --apply: comma-separated event ids to write (each must be a writable candidate from the dry run)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -44,7 +45,15 @@ func run(args []string) error {
 		return fmt.Errorf("database path %s is a directory", *dbPath)
 	}
 
+	var named []int64
 	if *apply {
+		var err error
+		if named, err = parseIDs(*idsFlag); err != nil {
+			return err
+		}
+		if len(named) == 0 {
+			return fmt.Errorf("--apply needs --ids naming the event ids to write (see the dry run); nothing written")
+		}
 		if err := checkBackupDir(*dbPath, *backupDir); err != nil {
 			return err
 		}
@@ -64,8 +73,8 @@ func run(args []string) error {
 
 	fmt.Printf("provability signal: %s\n\n", backfill.HebrewYearSignal)
 	for _, f := range rep.Fixes {
-		fmt.Printf("  event %d (user %d, %s): hebrew %d/%d, year %d -> %d (secondary gregorian %d/%d)\n",
-			f.EventID, f.UserID, f.Name, f.HebMonth, f.HebDay, f.BeforeYear, f.AfterYear, f.SecMonth, f.SecDay)
+		fmt.Printf("  event %d (user %d, %s): hebrew %d/%d, stored year %d, stored gregorian date %d/%d; proposed year %d; flagged: %s\n",
+			f.EventID, f.UserID, f.Name, f.HebMonth, f.HebDay, f.BeforeYear, f.SecMonth, f.SecDay, f.AfterYear, f.Reason)
 	}
 	fmt.Printf("\nprovable (would fix):  %d\n", rep.Provable)
 	fmt.Printf("already-correct:       %d (secondary date agrees with the stored year)\n", rep.Consistent)
@@ -77,12 +86,21 @@ func run(args []string) error {
 		return nil
 	}
 	if !*apply {
-		fmt.Printf("\n%d event(s) would change. Re-run with --apply to write them.\n", len(rep.Fixes))
+		fmt.Printf("\n%d candidate(s). Nothing is written automatically; re-run with --apply --ids <id,id,...> naming the writable ones.\n", len(rep.Fixes))
 		return nil
 	}
 
-	if *confirm != len(rep.Fixes) {
-		return fmt.Errorf("--apply needs --confirm-count %d (the number of events in the plan above); got %d, nothing written", len(rep.Fixes), *confirm)
+	byID := map[int64]backfill.YearFix{}
+	for _, f := range rep.Fixes {
+		byID[f.EventID] = f
+	}
+	var chosen []backfill.YearFix
+	for _, id := range named {
+		f, ok := byID[id]
+		if !ok {
+			return fmt.Errorf("event %d is not a candidate in the dry run; nothing written", id)
+		}
+		chosen = append(chosen, f)
 	}
 
 	backupPath, err := backfill.Backup(ctx, db, *backupDir, time.Now(), backupRetention, "birthly_hebyear", *dbPath)
@@ -90,7 +108,7 @@ func run(args []string) error {
 		return fmt.Errorf("backup before apply (aborting, nothing written): %w", err)
 	}
 	fmt.Printf("\nbackup written to %s\n", backupPath)
-	res, err := backfill.ApplyHebrewYearRepair(ctx, db, rep.Fixes)
+	res, err := backfill.ApplyHebrewYearRepair(ctx, db, chosen)
 	if err != nil {
 		return fmt.Errorf("applying repair (transaction rolled back, nothing written): %w", err)
 	}
@@ -133,4 +151,26 @@ func checkBackupDir(dbPath, backupDir string) error {
 		return fmt.Errorf("backup dir %s contains the database %s; choose a different --backup-dir", backupDir, dbPath)
 	}
 	return nil
+}
+
+// parseIDs reads a comma-separated list of positive event ids, rejecting duplicates.
+func parseIDs(s string) ([]int64, error) {
+	var out []int64
+	seen := map[int64]bool{}
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(part, 10, 64)
+		if err != nil || id <= 0 {
+			return nil, fmt.Errorf("invalid event id %q in --ids", part)
+		}
+		if seen[id] {
+			return nil, fmt.Errorf("event id %d named twice", id)
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out, nil
 }

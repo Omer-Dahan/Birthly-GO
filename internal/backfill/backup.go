@@ -38,9 +38,18 @@ func Backup(ctx context.Context, db *sql.DB, backupDir string, now time.Time, re
 		return "", fmt.Errorf("VACUUM INTO: %w", err)
 	}
 
+	// Mark the snapshot as this tool's own; pruning only ever touches marked files.
+	if err := os.WriteFile(dest+ownerMarkerSuffix, []byte("created by birthly backup\n"), 0o644); err != nil {
+		return "", fmt.Errorf("writing backup marker: %w", err)
+	}
+
 	pruneBackups(backupDir, retention, prefix, protect)
 	return dest, nil
 }
+
+// ownerMarkerSuffix names the sidecar file that marks a snapshot as created
+// by Backup. A database file without its marker is never pruned.
+const ownerMarkerSuffix = ".birthly-backup"
 
 func pruneBackups(backupDir string, retention int, prefix string, protect []string) {
 	if retention <= 0 {
@@ -53,9 +62,14 @@ func pruneBackups(backupDir string, retention int, prefix string, protect []stri
 	}
 	var names []string
 	for _, e := range entries {
-		if pattern.MatchString(e.Name()) {
-			names = append(names, e.Name())
+		if !pattern.MatchString(e.Name()) || !e.Type().IsRegular() {
+			continue
 		}
+		// Only snapshots carrying our marker (a regular file) are ours.
+		if mi, err := os.Lstat(filepath.Join(backupDir, e.Name()+ownerMarkerSuffix)); err != nil || !mi.Mode().IsRegular() {
+			continue
+		}
+		names = append(names, e.Name())
 	}
 	// Timestamp-named (YYYYMMDD_HHMMSS), so lexicographic order is chronological.
 	sort.Strings(names)
@@ -83,5 +97,6 @@ func pruneBackups(backupDir string, retention int, prefix string, protect []stri
 			}
 		}
 		os.Remove(path)
+		os.Remove(path + ownerMarkerSuffix)
 	}
 }

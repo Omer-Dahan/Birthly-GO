@@ -62,5 +62,45 @@ func TestHebrewYearRepair(t *testing.T) {
 	}
 }
 
-func TestApplySkipsRowChangedSinceplanning(t *testing.T) {
+func TestManualDateRowReportedNotWrittenEvenWhenNamed(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	uid := makeUser(t, ctx, db, 2002, false)
+	_, hm, hd := core.ToHebrew(time.Date(1983, 11, 30, 0, 0, 0, 0, time.UTC))
+	y := 5744 // correct year
+	id := makeEvent(t, ctx, db, uid, core.CalendarTypeHebrew, &y, hm, hd, true, false)
+	// The date matches the next Hebrew year but was entered by hand later.
+	if _, err := db.ExecContext(ctx, `UPDATE events SET secondary_calendar_type='gregorian', secondary_month=11, secondary_day=30,
+		created_at='2020-01-01 00:00:00', updated_at='2021-01-01 00:00:00' WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	// Make the manual date match year+1 rather than the stored year.
+	d2, err := core.ToGregorian(y+1, core.ResolveMonth(y+1, hm, core.AdarPolicyAdarII), hd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE events SET secondary_month=?, secondary_day=? WHERE id=?`, int(d2.Month()), d2.Day(), id); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := PlanHebrewYearRepair(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Fixes) != 1 || rep.Fixes[0].Writable || rep.Fixes[0].Reason == "" || rep.Provable != 0 {
+		t.Fatalf("expected one reported, non-writable candidate: %+v", rep)
+	}
+	res, err := ApplyHebrewYearRepair(ctx, db, rep.Fixes)
+	if err != nil || res.Applied != 0 || len(res.Skipped) != 1 {
+		t.Fatalf("apply = %+v, %v", res, err)
+	}
+	// Even a hand-forged writable claim is refused by the in-transaction re-check.
+	forged := rep.Fixes[0]
+	forged.Writable = true
+	if res, err := ApplyHebrewYearRepair(ctx, db, []YearFix{forged}); err != nil || res.Applied != 0 {
+		t.Fatalf("forged apply = %+v, %v", res, err)
+	}
+	var got int
+	if err := db.QueryRowContext(ctx, `SELECT year FROM events WHERE id=?`, id).Scan(&got); err != nil || got != y {
+		t.Fatalf("year = %d (%v), want %d", got, err, y)
+	}
 }
