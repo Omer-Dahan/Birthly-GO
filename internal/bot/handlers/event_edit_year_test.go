@@ -129,10 +129,11 @@ func TestEditFlow_HebrewYearKeepsStoredGregorianDate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 10 Tishrei 5750 fell on 1989-10-09. Store a Gregorian anchor of 25 Dec,
-	// which no recomputation from the new year can produce, so any code that
-	// rewrites the stored date from the year is caught.
-	sm, sd := 12, 25
+	// 10 Tishrei 5750 fell on 1989-10-09. Store 8 Oct, the civil day
+	// before (an after-sunset birth): consistent with the year, yet not what
+	// a recomputation from the new year produces, so code that rewrites the
+	// stored date from the year is caught.
+	sm, sd := 10, 8
 	if src, err := exactGregorianBirthDate(5750, 7, 10, user.AdarPolicy); err != nil ||
 		(int(src.Month()) == sm && src.Day() == sd) {
 		t.Fatalf("fixture must differ from the recomputed date, got %v (%v)", src, err)

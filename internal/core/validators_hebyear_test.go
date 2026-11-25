@@ -97,3 +97,53 @@ func TestParseHebrewYearInputAnchored_Sweep(t *testing.T) {
 		}
 	}
 }
+
+func TestParseHebrewYearInputAnchored_ContradictingDate(t *testing.T) {
+	// 20 Tevet falls on 1983-12-26 (5744) and 1985-01-13 (5745): 1984 has none.
+	if got, err := ParseHebrewYearInputFor("1984", tevet, 20, AdarPolicyAdarII); err == nil {
+		t.Fatalf("20 Tevet 1984: silently returned %d", got)
+	}
+	m, d := 12, 26
+	if got, err := ParseHebrewYearInputAnchored("1984", tevet, 20, AdarPolicyAdarII, &m, &d); err == nil {
+		t.Fatalf("20 Tevet 1984 with stored 26/12: silently returned %d", got)
+	}
+	// 26 Tevet 5744 is 1984-01-01; a birth after sunset on 31/12/1983 is
+	// stored as 31/12 and belongs to 5744, not 5743.
+	m, d = 12, 31
+	got, err := ParseHebrewYearInputAnchored("1983", tevet, 26, AdarPolicyAdarII, &m, &d)
+	if err != nil || got != 5744 {
+		t.Fatalf("26 Tevet after sunset: got (%d,%v), want 5744", got, err)
+	}
+}
+
+func TestParseHebrewYearInput_NeverSilentlyWrong(t *testing.T) {
+	for greg := 1900; greg <= 2100; greg++ {
+		for hm := 1; hm <= 13; hm++ {
+			for hd := 1; hd <= 30; hd++ {
+				got, err := ParseHebrewYearInputFor(itoa(greg), hm, hd, AdarPolicyAdarII)
+				if err != nil {
+					continue
+				}
+				d, derr := ToGregorian(got, ResolveMonth(got, hm, AdarPolicyAdarII), hd)
+				if derr != nil || d.Year() != greg {
+					t.Fatalf("%d m%d d%d: silently returned %d (date %v, %v)", greg, hm, hd, got, d, derr)
+				}
+				// A stored date that contradicts the year must never yield one.
+				sm, sd := int(d.Month()), d.Day()
+				for _, off := range []int{-3, 3} {
+					o := d.AddDate(0, 0, off)
+					om, od := int(o.Month()), o.Day()
+					if g2, err := ParseHebrewYearInputAnchored(itoa(greg), hm, hd, AdarPolicyAdarII, &om, &od); err == nil {
+						d2, _ := ToGregorian(g2, ResolveMonth(g2, hm, AdarPolicyAdarII), hd)
+						if c := d2.AddDate(0, 0, -1); !(int(d2.Month()) == om && d2.Day() == od) && !(int(c.Month()) == om && c.Day() == od) {
+							t.Fatalf("%d m%d d%d stored %02d/%02d: returned %d contradicting it", greg, hm, hd, od, om, g2)
+						}
+					}
+				}
+				if g3, err := ParseHebrewYearInputAnchored(itoa(greg), hm, hd, AdarPolicyAdarII, &sm, &sd); err != nil || g3 != got {
+					t.Fatalf("%d m%d d%d exact stored: got (%d,%v) want %d", greg, hm, hd, g3, err, got)
+				}
+			}
+		}
+	}
+}
