@@ -140,3 +140,23 @@ func TestRenderReminder_RelationAndPhoneAppendix(t *testing.T) {
 		t.Errorf("reminder missing phone line: %q", text)
 	}
 }
+
+func TestRenderReminder_AgePerCalendarTrack(t *testing.T) {
+	user, event, rule := rendererFixtures()
+	user.Language = core.LanguageEn
+	year := 5744
+	sec, secM, secD := core.CalendarTypeGregorian, 9, 9
+	event.CalendarType = core.CalendarTypeHebrew
+	event.Year, event.Month, event.Day = &year, 7, 1 // 1 Tishrei (Nisan = 1)
+	event.SecondaryCalendarType, event.SecondaryMonth, event.SecondaryDay = &sec, &secM, &secD
+	occ := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+
+	greg := RenderReminder(user, event, rule, occ, core.CalendarTypeGregorian)
+	if !strings.Contains(greg, "Turning <b>43</b>") {
+		t.Errorf("gregorian track should say 43: %q", greg)
+	}
+	heb := RenderReminder(user, event, rule, occ, core.CalendarTypeHebrew)
+	if !strings.Contains(heb, "Turning <b>42</b>") {
+		t.Errorf("hebrew track should say 42: %q", heb)
+	}
+}
