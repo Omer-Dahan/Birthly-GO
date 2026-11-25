@@ -753,3 +753,72 @@ func TestMsgAddHebrewYear_FutureYearRejected(t *testing.T) {
 		t.Errorf("events rows = %d (err %v), want 0", n, err)
 	}
 }
+
+// TestAddFlow_NewAddDoesNotInheritPreviousYear starts add for A, enters a
+// year, starts add for B, skips the year and saves: B must have no year and
+// A must not have been stored.
+func TestAddFlow_NewAddDoesNotInheritPreviousYear(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer db.Close()
+	user, err := services.GetOrCreateUser(ctx, db, 2010, nil, "Dana", nil, false)
+	if err != nil {
+		t.Fatalf("GetOrCreateUser: %v", err)
+	}
+
+	fsmStore := fsm.NewStore(time.Hour, 200)
+	gctx, cq := newAddFlowCallbackContext(user, db, fsmStore)
+	cq.Data = "mn:add"
+	bot := testEditBot(&fakeEditClient{})
+
+	// Add for A, up to a typed Hebrew year.
+	if err := cbMenuAdd(bot, gctx); err != nil {
+		t.Fatalf("cbMenuAdd A: %v", err)
+	}
+	fsmStore.UpdateData(user.ID, map[string]any{
+		"first_name": "Alef", "heb_month": 5, "heb_day": 20, "heb_year": 5781,
+		"auto_sec_month": 7, "auto_sec_day": 29,
+	})
+	fsmStore.SetState(user.ID, fsm.AddEventSecondaryAutoConfirm)
+
+	// Start add for B without finishing A.
+	if err := cbMenuAdd(bot, gctx); err != nil {
+		t.Fatalf("cbMenuAdd B: %v", err)
+	}
+	if d := fsmStore.GetData(user.ID); len(d) != 0 {
+		t.Fatalf("data after new add = %v, want empty", d)
+	}
+	// A's late auto-confirm must not land in B's flow.
+	if err := cbAddSecondaryAutoYes(bot, gctx); err != ext.ContinueGroups {
+		t.Fatalf("late autoyes err = %v, want ContinueGroups", err)
+	}
+	if evs, _ := repo.NewEventRepo(db, user.ID).ListNotDeleted(ctx); len(evs) != 0 {
+		t.Fatalf("late reply saved %d events, want 0", len(evs))
+	}
+
+	fsmStore.UpdateData(user.ID, map[string]any{"first_name": "Bet", "heb_month": 5, "heb_day": 21})
+	fsmStore.SetState(user.ID, fsm.AddEventHebYear)
+	if err := cbAddNoYear(bot, gctx); err != nil {
+		t.Fatalf("cbAddNoYear: %v", err)
+	}
+	if err := cbAddSecondaryNo(bot, gctx); err != nil {
+		t.Fatalf("cbAddSecondaryNo: %v", err)
+	}
+
+	events, err := repo.NewEventRepo(db, user.ID).ListNotDeleted(ctx)
+	if err != nil {
+		t.Fatalf("ListNotDeleted: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("len(events) = %d, want 1 (only B)", len(events))
+	}
+	if events[0].FirstName != "Bet" {
+		t.Errorf("stored %q, want Bet (A must store nothing)", events[0].FirstName)
+	}
+	if events[0].Year != nil {
+		t.Errorf("B year = %d, want none", *events[0].Year)
+	}
+}

@@ -67,7 +67,10 @@ func eventFlowActionFilter(action string) filters.CallbackQuery {
 
 func cbMenuAdd(b *gotgbot.Bot, ctx *ext.Context) error {
 	user := User(ctx)
-	router.FSMFromContext(ctx).SetState(user.ID, fsm.AddEventName)
+	store := router.FSMFromContext(ctx)
+	// A new add starts from nothing: drop every value the previous flow left.
+	store.Clear(user.ID)
+	store.SetState(user.ID, fsm.AddEventName)
 
 	text := i18n.T("add.name.title", user.Language, nil) + "\n<i>" + i18n.T("add.name.hint", user.Language, nil) + "</i>"
 	if err := EditOrIgnore(b, ctx.CallbackQuery, text, keyboards.NameStepKeyboard(user.Language)); err != nil {
@@ -162,6 +165,12 @@ func cbAddNoYear(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 
 	case fsm.AddEventHebYear:
+		// Skipping the year means no year: discard any value left over.
+		kept := store.GetData(user.ID)
+		delete(kept, "heb_year")
+		delete(kept, "auto_sec_month")
+		delete(kept, "auto_sec_day")
+		store.SetData(user.ID, kept)
 		store.SetState(user.ID, fsm.AddEventSecondaryPrompt)
 		text := i18n.T("add.secondary.prompt", user.Language, nil)
 		if err := EditOrIgnore(b, ctx.CallbackQuery, text, keyboards.SecondaryDatePromptKeyboard(user.Language)); err != nil {
