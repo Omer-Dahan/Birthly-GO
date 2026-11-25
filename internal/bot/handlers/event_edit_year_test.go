@@ -257,3 +257,64 @@ func TestFieldPick_OldPickerCannotActOnOtherEvent(t *testing.T) {
 		t.Fatalf("second event changed: %+v -> %+v", second, got)
 	}
 }
+
+func TestEditFlow_StaleClearButtonCannotWipeOtherEvent(t *testing.T) {
+	if err := i18n.LoadLocales(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	user, err := services.GetOrCreateUser(ctx, db, 4102, nil, "U", nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mk := func(name string) *models.Event {
+		ev, err := services.CreateMinimalEvent(ctx, db, user, services.NewEventInput{FirstName: name, Month: 3, Day: 15, Year: intPtr(1990)}, 1000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ev
+	}
+	evA, evB := mk("A"), mk("B")
+
+	// The clear button rendered under event A's year prompt.
+	kb := keyboards.FieldPromptKeyboard("en", "year", evA.ID, true)
+	var staleData string
+	for _, row := range kb.InlineKeyboard {
+		for _, btn := range row {
+			if strings.HasPrefix(btn.CallbackData, "ev:clear:") {
+				staleData = btn.CallbackData
+			}
+		}
+	}
+	if staleData == "" {
+		t.Fatal("no clear button rendered")
+	}
+
+	fsmStore := fsm.NewStore(time.Hour, 200)
+	fsmStore.SetState(user.ID, fsm.EditEventEnteringValue)
+	fsmStore.UpdateData(user.ID, map[string]any{"event_id": evB.ID, "editing_field": "year"})
+	bot := testEditBot(&fakeEditClient{})
+
+	for _, data := range []string{staleData, "ev:clear:year"} {
+		if err := cbFieldClear(bot, editYearCtx(t, db, user.ID, fsmStore, data, "", user)); err != nil {
+			t.Fatalf("cbFieldClear(%q): %v", data, err)
+		}
+		got, err := services.GetOwnedEvent(ctx, db, user, evB.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Year == nil || *got.Year != 1990 {
+			t.Fatalf("stale %q wiped event B's year: %v", data, got.Year)
+		}
+		if state, _ := fsmStore.GetState(user.ID); state != fsm.EditEventEnteringValue {
+			t.Fatalf("state changed to %q", state)
+		}
+	}
+}
+
+func intPtr(v int) *int { return &v }

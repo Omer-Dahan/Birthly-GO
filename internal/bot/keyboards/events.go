@@ -239,39 +239,39 @@ func MoreDetailsKeyboard(lang string, eventID int64, ev EventFieldValues) *gotgb
 
 // FieldPromptKeyboard is the [skip] [clear] [back] row under a field's
 // text-entry prompt.
-func FieldPromptKeyboard(lang, field string, hasValue bool) *gotgbot.InlineKeyboardMarkup {
+func FieldPromptKeyboard(lang, field string, eventID int64, hasValue bool) *gotgbot.InlineKeyboardMarkup {
 	skip := flowBtn(i18n.T("common.skip", lang, nil), "skip")
 	back := flowBtn(i18n.T("common.back", lang, nil), "more")
 	row := []gotgbot.InlineKeyboardButton{skip}
 	if hasValue {
-		row = append(row, flowValBtn(i18n.T("field.clear", lang, nil), "clear", field))
+		row = append(row, flowValBtn(i18n.T("field.clear", lang, nil), "clear", FieldPickValue(field, eventID)))
 	}
 	return &gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{row, {back}}}
 }
 
-func CategoryPickerKeyboard(lang string) *gotgbot.InlineKeyboardMarkup {
+func CategoryPickerKeyboard(lang string, eventID int64) *gotgbot.InlineKeyboardMarkup {
 	buttons := make([]gotgbot.InlineKeyboardButton, len(core.CategoryValues))
 	for i, c := range core.CategoryValues {
-		buttons[i] = flowValBtn(i18n.T("category."+c, lang, nil), "cat", c)
+		buttons[i] = flowValBtn(i18n.T("category."+c, lang, nil), "cat", FieldPickValue(c, eventID))
 	}
 	rows := BuildGrid(buttons, 2)
 	rows = append(rows, []gotgbot.InlineKeyboardButton{flowBtn(i18n.T("common.back", lang, nil), "more")})
 	return &gotgbot.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
-func GenderPickerKeyboard(lang string) *gotgbot.InlineKeyboardMarkup {
+func GenderPickerKeyboard(lang string, eventID int64) *gotgbot.InlineKeyboardMarkup {
 	buttons := make([]gotgbot.InlineKeyboardButton, len(core.GenderValues))
 	for i, g := range core.GenderValues {
-		buttons[i] = flowValBtn(i18n.T("gender."+g, lang, nil), "gender", g)
+		buttons[i] = flowValBtn(i18n.T("gender."+g, lang, nil), "gender", FieldPickValue(g, eventID))
 	}
 	back := flowBtn(i18n.T("common.back", lang, nil), "more")
 	return &gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{buttons, {back}}}
 }
 
-func EventTypePickerKeyboard(lang string) *gotgbot.InlineKeyboardMarkup {
+func EventTypePickerKeyboard(lang string, eventID int64) *gotgbot.InlineKeyboardMarkup {
 	buttons := make([]gotgbot.InlineKeyboardButton, len(core.EventTypeValues))
 	for i, e := range core.EventTypeValues {
-		buttons[i] = flowValBtn(i18n.T("event_type."+e, lang, nil), "type", e)
+		buttons[i] = flowValBtn(i18n.T("event_type."+e, lang, nil), "type", FieldPickValue(e, eventID))
 	}
 	rows := BuildGrid(buttons, 2)
 	rows = append(rows, []gotgbot.InlineKeyboardButton{flowBtn(i18n.T("common.back", lang, nil), "more")})

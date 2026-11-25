@@ -216,19 +216,19 @@ func cbFieldPick(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	switch field {
 	case "category":
-		if err := EditOrIgnore(b, ctx.CallbackQuery, i18n.T("edit.pick_category", user.Language, nil), keyboards.CategoryPickerKeyboard(user.Language)); err != nil {
+		if err := EditOrIgnore(b, ctx.CallbackQuery, i18n.T("edit.pick_category", user.Language, nil), keyboards.CategoryPickerKeyboard(user.Language, eventID)); err != nil {
 			return err
 		}
 		AnswerCallback(b, ctx.CallbackQuery, "")
 		return nil
 	case "gender":
-		if err := EditOrIgnore(b, ctx.CallbackQuery, i18n.T("edit.pick_gender", user.Language, nil), keyboards.GenderPickerKeyboard(user.Language)); err != nil {
+		if err := EditOrIgnore(b, ctx.CallbackQuery, i18n.T("edit.pick_gender", user.Language, nil), keyboards.GenderPickerKeyboard(user.Language, eventID)); err != nil {
 			return err
 		}
 		AnswerCallback(b, ctx.CallbackQuery, "")
 		return nil
 	case "event_type":
-		if err := EditOrIgnore(b, ctx.CallbackQuery, i18n.T("edit.pick_event_type", user.Language, nil), keyboards.EventTypePickerKeyboard(user.Language)); err != nil {
+		if err := EditOrIgnore(b, ctx.CallbackQuery, i18n.T("edit.pick_event_type", user.Language, nil), keyboards.EventTypePickerKeyboard(user.Language, eventID)); err != nil {
 			return err
 		}
 		AnswerCallback(b, ctx.CallbackQuery, "")
@@ -240,7 +240,7 @@ func cbFieldPick(b *gotgbot.Bot, ctx *ext.Context) error {
 	if promptKey == "" {
 		promptKey = "field.prompt"
 	}
-	if err := EditOrIgnore(b, ctx.CallbackQuery, i18n.T(promptKey, user.Language, nil), keyboards.FieldPromptKeyboard(user.Language, field, hasValue)); err != nil {
+	if err := EditOrIgnore(b, ctx.CallbackQuery, i18n.T(promptKey, user.Language, nil), keyboards.FieldPromptKeyboard(user.Language, field, eventID, hasValue)); err != nil {
 		return err
 	}
 	AnswerCallback(b, ctx.CallbackQuery, "")
@@ -290,11 +290,11 @@ func applyFieldFromCallback(b *gotgbot.Bot, ctx *ext.Context, field string) erro
 		return ext.ContinueGroups
 	}
 
-	decoded, err := callbacks.DecodeEvent(ctx.CallbackQuery.Data)
-	if err != nil || decoded.Flow == nil {
-		return err
+	value, ok := boundFieldValue(b, ctx, field)
+	if !ok {
+		return nil
 	}
-	return applyField(b, ctx, field, decoded.Flow.Value)
+	return applyField(b, ctx, field, &value)
 }
 
 func cbFieldClear(b *gotgbot.Bot, ctx *ext.Context) error {
@@ -304,15 +304,43 @@ func cbFieldClear(b *gotgbot.Bot, ctx *ext.Context) error {
 		return ext.ContinueGroups
 	}
 
-	decoded, err := callbacks.DecodeEvent(ctx.CallbackQuery.Data)
-	if err != nil || decoded.Flow == nil {
-		return err
+	// For clear the bound value is the field itself; it must also be the
+	// field the edit state is currently on.
+	field, ok := boundFieldValue(b, ctx, "")
+	if !ok {
+		return nil
 	}
-	field := ""
-	if decoded.Flow.Value != nil {
-		field = *decoded.Flow.Value
+	if editing, _ := store.GetData(user.ID)["editing_field"].(string); editing != field {
+		NotFoundAlert(b, ctx.CallbackQuery, user.Language)
+		return nil
 	}
 	return applyField(b, ctx, field, nil)
+}
+
+// boundFieldValue decodes a "<value>.<event id>" callback value and checks
+// that it belongs to the event being edited and, when wantField is set, that
+// the edit state is on that field. A stale button gets a not-found alert.
+func boundFieldValue(b *gotgbot.Bot, ctx *ext.Context, wantField string) (string, bool) {
+	user := User(ctx)
+	store := router.FSMFromContext(ctx)
+	decoded, err := callbacks.DecodeEvent(ctx.CallbackQuery.Data)
+	if err != nil || decoded.Flow == nil || decoded.Flow.Value == nil {
+		NotFoundAlert(b, ctx.CallbackQuery, user.Language)
+		return "", false
+	}
+	value, boundID, ok := keyboards.ParseFieldPickValue(*decoded.Flow.Value)
+	eventID, hasEvent := fsmEventID(store, user.ID)
+	if !ok || !hasEvent || boundID != eventID {
+		NotFoundAlert(b, ctx.CallbackQuery, user.Language)
+		return "", false
+	}
+	if wantField != "" {
+		if editing, _ := store.GetData(user.ID)["editing_field"].(string); editing != wantField {
+			NotFoundAlert(b, ctx.CallbackQuery, user.Language)
+			return "", false
+		}
+	}
+	return value, true
 }
 
 // applyField persists field=value on the event currently being edited
