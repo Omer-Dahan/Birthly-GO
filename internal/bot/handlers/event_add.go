@@ -43,6 +43,36 @@ func RegisterEventAdd(dispatcher *ext.Dispatcher) {
 	dispatcher.AddHandler(handlers.NewCallback(eventFlowActionFilter("autono"), cbAddSecondaryAutoNo))
 }
 
+// addPromptKey holds the id of the message the current add step was asked in.
+const addPromptKey = "add_prompt_message_id"
+
+// addTextStale reports whether a text message is a reply to some other
+// message than the add prompt now open (an abandoned flow's question).
+func addTextStale(data map[string]any, msg *gotgbot.Message) bool {
+	if msg == nil || msg.ReplyToMessage == nil {
+		return false
+	}
+	promptMsg, _ := data[addPromptKey].(int64)
+	return promptMsg != msg.ReplyToMessage.MessageId
+}
+
+// addCallbackStale reports whether a button press comes from a message other
+// than the add prompt now open, and tells the user to restart when it does.
+func addCallbackStale(b *gotgbot.Bot, ctx *ext.Context, user *models.User, store *fsm.Store) bool {
+	promptMsg, _ := store.GetData(user.ID)[addPromptKey].(int64)
+	if promptMsg == 0 || ctx.CallbackQuery.Message.GetMessageId() == promptMsg {
+		return false
+	}
+	AnswerCallback(b, ctx.CallbackQuery, i18n.T("add.stale_prompt", user.Language, nil))
+	return true
+}
+
+// refuseStaleAddText answers a reply aimed at an abandoned add prompt.
+func refuseStaleAddText(b *gotgbot.Bot, ctx *ext.Context, user *models.User) error {
+	_, err := ctx.EffectiveMessage.Reply(b, i18n.T("add.stale_prompt", user.Language, nil), nil)
+	return err
+}
+
 func anyText(msg *gotgbot.Message) bool { return msg.Text != "" }
 
 func menuActionFilter(action string) filters.CallbackQuery {
@@ -71,6 +101,7 @@ func cbMenuAdd(b *gotgbot.Bot, ctx *ext.Context) error {
 	// A new add starts from nothing: drop every value the previous flow left.
 	store.Clear(user.ID)
 	store.SetState(user.ID, fsm.AddEventName)
+	store.UpdateData(user.ID, map[string]any{addPromptKey: ctx.CallbackQuery.Message.GetMessageId()})
 
 	text := i18n.T("add.name.title", user.Language, nil) + "\n<i>" + i18n.T("add.name.hint", user.Language, nil) + "</i>"
 	if err := EditOrIgnore(b, ctx.CallbackQuery, text, keyboards.NameStepKeyboard(user.Language)); err != nil {
@@ -85,6 +116,9 @@ func msgAddName(b *gotgbot.Bot, ctx *ext.Context) error {
 	store := router.FSMFromContext(ctx)
 	if state, ok := store.GetState(user.ID); !ok || state != fsm.AddEventName {
 		return ext.ContinueGroups
+	}
+	if addTextStale(store.GetData(user.ID), ctx.EffectiveMessage) {
+		return refuseStaleAddText(b, ctx, user)
 	}
 
 	cleaned, err := core.ValidateName(ctx.EffectiveMessage.Text)
@@ -108,7 +142,10 @@ func msgAddName(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 	title := i18n.T("add.date.title", user.Language, mergeKwargs(map[string]any{"name": core.Esc(firstName)}, genderKw))
 	text := title + "\n\n" + i18n.T("add.date.hint", user.Language, nil)
-	_, err2 := ctx.EffectiveMessage.Reply(b, text, &gotgbot.SendMessageOpts{ReplyMarkup: keyboards.DateStepKeyboard(user.Language), ParseMode: "HTML"})
+	sent, err2 := ctx.EffectiveMessage.Reply(b, text, &gotgbot.SendMessageOpts{ReplyMarkup: keyboards.DateStepKeyboard(user.Language), ParseMode: "HTML"})
+	if err2 == nil && sent != nil {
+		store.UpdateData(user.ID, map[string]any{addPromptKey: sent.MessageId})
+	}
 	return err2
 }
 
@@ -124,6 +161,9 @@ func msgAddDate(b *gotgbot.Bot, ctx *ext.Context) error {
 	store := router.FSMFromContext(ctx)
 	if state, ok := store.GetState(user.ID); !ok || state != fsm.AddEventDate {
 		return ext.ContinueGroups
+	}
+	if addTextStale(store.GetData(user.ID), ctx.EffectiveMessage) {
+		return refuseStaleAddText(b, ctx, user)
 	}
 
 	parsed, err := core.ParseGregorian(ctx.EffectiveMessage.Text, timeNow())
@@ -153,6 +193,9 @@ func cbAddNoYear(b *gotgbot.Bot, ctx *ext.Context) error {
 	state, ok := store.GetState(user.ID)
 	if !ok {
 		return ext.ContinueGroups
+	}
+	if addCallbackStale(b, ctx, user, store) {
+		return nil
 	}
 
 	switch state {
@@ -190,6 +233,9 @@ func cbAddHebrewTrack(b *gotgbot.Bot, ctx *ext.Context) error {
 	if state, ok := store.GetState(user.ID); !ok || state != fsm.AddEventDate {
 		return ext.ContinueGroups
 	}
+	if addCallbackStale(b, ctx, user, store) {
+		return nil
+	}
 
 	store.SetState(user.ID, fsm.AddEventHebMonth)
 	if err := EditOrIgnore(b, ctx.CallbackQuery, i18n.T("add.heb_month.title", user.Language, nil), keyboards.HebrewMonthKeyboard()); err != nil {
@@ -204,6 +250,9 @@ func cbAddHebrewMonth(b *gotgbot.Bot, ctx *ext.Context) error {
 	store := router.FSMFromContext(ctx)
 	if state, ok := store.GetState(user.ID); !ok || state != fsm.AddEventHebMonth {
 		return ext.ContinueGroups
+	}
+	if addCallbackStale(b, ctx, user, store) {
+		return nil
 	}
 
 	decoded, err := callbacks.DecodeEvent(ctx.CallbackQuery.Data)
@@ -247,6 +296,9 @@ func cbAddHebrewDay(b *gotgbot.Bot, ctx *ext.Context) error {
 	if state, ok := store.GetState(user.ID); !ok || state != fsm.AddEventHebDay {
 		return ext.ContinueGroups
 	}
+	if addCallbackStale(b, ctx, user, store) {
+		return nil
+	}
 
 	decoded, err := callbacks.DecodeEvent(ctx.CallbackQuery.Data)
 	if err != nil || decoded.Flow == nil {
@@ -285,6 +337,9 @@ func msgAddHebrewYear(b *gotgbot.Bot, ctx *ext.Context) error {
 	if state, ok := store.GetState(user.ID); !ok || state != fsm.AddEventHebYear {
 		return ext.ContinueGroups
 	}
+	if addTextStale(store.GetData(user.ID), ctx.EffectiveMessage) {
+		return refuseStaleAddText(b, ctx, user)
+	}
 
 	data := store.GetData(user.ID)
 	hebMonth, _ := data["heb_month"].(int)
@@ -309,13 +364,19 @@ func msgAddHebrewYear(b *gotgbot.Bot, ctx *ext.Context) error {
 		store.SetState(user.ID, fsm.AddEventSecondaryAutoConfirm)
 
 		text := i18n.T("add.secondary_auto.prompt", user.Language, map[string]any{"date": core.FormatDate(greg, user.DateFormat)})
-		_, sendErr := ctx.EffectiveMessage.Reply(b, text, &gotgbot.SendMessageOpts{ReplyMarkup: keyboards.SecondaryAutoConfirmKeyboard(user.Language)})
+		sent, sendErr := ctx.EffectiveMessage.Reply(b, text, &gotgbot.SendMessageOpts{ReplyMarkup: keyboards.SecondaryAutoConfirmKeyboard(user.Language)})
+		if sendErr == nil && sent != nil {
+			store.UpdateData(user.ID, map[string]any{addPromptKey: sent.MessageId})
+		}
 		return sendErr
 	}
 
 	store.SetState(user.ID, fsm.AddEventSecondaryPrompt)
 	text := i18n.T("add.secondary.prompt", user.Language, nil)
-	_, sendErr := ctx.EffectiveMessage.Reply(b, text, &gotgbot.SendMessageOpts{ReplyMarkup: keyboards.SecondaryDatePromptKeyboard(user.Language)})
+	sent, sendErr := ctx.EffectiveMessage.Reply(b, text, &gotgbot.SendMessageOpts{ReplyMarkup: keyboards.SecondaryDatePromptKeyboard(user.Language)})
+	if sendErr == nil && sent != nil {
+		store.UpdateData(user.ID, map[string]any{addPromptKey: sent.MessageId})
+	}
 	return sendErr
 }
 
@@ -326,6 +387,9 @@ func cbAddSecondaryYes(b *gotgbot.Bot, ctx *ext.Context) error {
 	store := router.FSMFromContext(ctx)
 	if state, ok := store.GetState(user.ID); !ok || state != fsm.AddEventSecondaryPrompt {
 		return ext.ContinueGroups
+	}
+	if addCallbackStale(b, ctx, user, store) {
+		return nil
 	}
 
 	store.SetState(user.ID, fsm.AddEventSecondaryDate)
@@ -345,6 +409,9 @@ func cbAddSecondaryNo(b *gotgbot.Bot, ctx *ext.Context) error {
 	if state, ok := store.GetState(user.ID); !ok || state != fsm.AddEventSecondaryPrompt {
 		return ext.ContinueGroups
 	}
+	if addCallbackStale(b, ctx, user, store) {
+		return nil
+	}
 	return finalizeSecondaryAndRespond(b, ctx, user, store, nil, nil)
 }
 
@@ -355,6 +422,9 @@ func cbAddSecondaryAutoYes(b *gotgbot.Bot, ctx *ext.Context) error {
 	store := router.FSMFromContext(ctx)
 	if state, ok := store.GetState(user.ID); !ok || state != fsm.AddEventSecondaryAutoConfirm {
 		return ext.ContinueGroups
+	}
+	if addCallbackStale(b, ctx, user, store) {
+		return nil
 	}
 
 	data := store.GetData(user.ID)
@@ -370,6 +440,9 @@ func cbAddSecondaryAutoManual(b *gotgbot.Bot, ctx *ext.Context) error {
 	store := router.FSMFromContext(ctx)
 	if state, ok := store.GetState(user.ID); !ok || state != fsm.AddEventSecondaryAutoConfirm {
 		return ext.ContinueGroups
+	}
+	if addCallbackStale(b, ctx, user, store) {
+		return nil
 	}
 
 	store.SetState(user.ID, fsm.AddEventSecondaryDate)
@@ -388,6 +461,9 @@ func cbAddSecondaryAutoNo(b *gotgbot.Bot, ctx *ext.Context) error {
 	store := router.FSMFromContext(ctx)
 	if state, ok := store.GetState(user.ID); !ok || state != fsm.AddEventSecondaryAutoConfirm {
 		return ext.ContinueGroups
+	}
+	if addCallbackStale(b, ctx, user, store) {
+		return nil
 	}
 	return finalizeSecondaryAndRespond(b, ctx, user, store, nil, nil)
 }
@@ -425,6 +501,9 @@ func msgAddSecondaryDate(b *gotgbot.Bot, ctx *ext.Context) error {
 	store := router.FSMFromContext(ctx)
 	if state, ok := store.GetState(user.ID); !ok || state != fsm.AddEventSecondaryDate {
 		return ext.ContinueGroups
+	}
+	if addTextStale(store.GetData(user.ID), ctx.EffectiveMessage) {
+		return refuseStaleAddText(b, ctx, user)
 	}
 
 	parsed, err := core.ParseGregorian(ctx.EffectiveMessage.Text, timeNow())

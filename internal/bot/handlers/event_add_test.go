@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"birthly/internal/bot/router"
 	"birthly/internal/config"
 	"birthly/internal/core"
+	"birthly/internal/i18n"
 	"birthly/internal/services"
 	"birthly/internal/store"
 	"birthly/internal/store/models"
@@ -788,8 +790,8 @@ func TestAddFlow_NewAddDoesNotInheritPreviousYear(t *testing.T) {
 	if err := cbMenuAdd(bot, gctx); err != nil {
 		t.Fatalf("cbMenuAdd B: %v", err)
 	}
-	if d := fsmStore.GetData(user.ID); len(d) != 0 {
-		t.Fatalf("data after new add = %v, want empty", d)
+	if d := fsmStore.GetData(user.ID); len(d) != 1 || d[addPromptKey] == nil {
+		t.Fatalf("data after new add = %v, want only the prompt id", d)
 	}
 	// A's late auto-confirm must not land in B's flow.
 	if err := cbAddSecondaryAutoYes(bot, gctx); err != ext.ContinueGroups {
@@ -820,5 +822,103 @@ func TestAddFlow_NewAddDoesNotInheritPreviousYear(t *testing.T) {
 	}
 	if events[0].Year != nil {
 		t.Errorf("B year = %d, want none", *events[0].Year)
+	}
+}
+
+// idClient hands out increasing message ids for every sendMessage.
+type idClient struct {
+	fakeEditClient
+	next int64
+}
+
+func (c *idClient) RequestWithContext(ctx context.Context, token, method string, params map[string]any, opts *gotgbot.RequestOpts) (json.RawMessage, error) {
+	if method == "sendMessage" {
+		c.next++
+		c.fakeEditClient.sent = append(c.fakeEditClient.sent, fmt.Sprint(params["text"]))
+		return json.Marshal(gotgbot.Message{MessageId: c.next, Date: time.Now().Unix()})
+	}
+	return c.fakeEditClient.RequestWithContext(ctx, token, method, params, opts)
+}
+
+// Add for A, ask the date, restart add for B and ask its date, then send A's
+// date as a reply to A's message: B must be unchanged and nothing saved.
+func TestAddFlow_ReplyToAbandonedDatePromptRefused(t *testing.T) {
+	if err := i18n.LoadLocales(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	user, err := services.GetOrCreateUser(ctx, db, 2020, nil, "U", nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fsmStore := fsm.NewStore(time.Hour, 200)
+	client := &idClient{next: 100}
+	bot := &gotgbot.Bot{Token: "t", BotClient: client}
+	gctx, cq := newAddFlowCallbackContext(user, db, fsmStore)
+	cq.Data = "mn:add"
+
+	typeText := func(text string, replyTo int64) *ext.Context {
+		msg := &gotgbot.Message{Chat: gotgbot.Chat{Id: user.ID}, Text: text}
+		if replyTo != 0 {
+			msg.ReplyToMessage = &gotgbot.Message{MessageId: replyTo, Chat: gotgbot.Chat{Id: user.ID}}
+		}
+		g := *gctx
+		g.Update = &gotgbot.Update{Message: msg}
+		g.EffectiveMessage = msg
+		return &g
+	}
+	start := func(name string) int64 {
+		if err := cbMenuAdd(bot, gctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := msgAddName(bot, typeText(name, 0)); err != nil {
+			t.Fatal(err)
+		}
+		id, _ := fsmStore.GetData(user.ID)[addPromptKey].(int64)
+		return id
+	}
+	promptA := start("Alef")
+	promptB := start("Bet")
+	if promptA == promptB {
+		t.Fatal("prompts share an id")
+	}
+
+	if err := msgAddDate(bot, typeText("15.3.1990", promptA)); err != nil {
+		t.Fatal(err)
+	}
+	if evs, _ := repo.NewEventRepo(db, user.ID).ListNotDeleted(ctx); len(evs) != 0 {
+		t.Fatalf("reply to A's prompt saved %d events", len(evs))
+	}
+	if st, _ := fsmStore.GetState(user.ID); st != fsm.AddEventDate {
+		t.Fatalf("B's state = %q, want still waiting for the date", st)
+	}
+	if fsmStore.GetData(user.ID)["first_name"] != "Bet" {
+		t.Fatalf("B's data changed: %v", fsmStore.GetData(user.ID))
+	}
+	if !client.sentContains(i18n.T("add.stale_prompt", user.Language, nil)) {
+		t.Fatal("user did not get the refusal")
+	}
+
+	// A button from A's old message is refused too.
+	gctx.CallbackQuery.Message = gotgbot.Message{MessageId: promptA, Chat: gotgbot.Chat{Id: user.ID}}
+	if err := cbAddHebrewTrack(bot, gctx); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := fsmStore.GetState(user.ID); st != fsm.AddEventDate {
+		t.Fatalf("old button moved B to %q", st)
+	}
+
+	// A reply to B's own prompt still saves B.
+	if err := msgAddDate(bot, typeText("15.3.1990", promptB)); err != nil {
+		t.Fatal(err)
+	}
+	evs, _ := repo.NewEventRepo(db, user.ID).ListNotDeleted(ctx)
+	if len(evs) != 1 || evs[0].FirstName != "Bet" {
+		t.Fatalf("events = %v, want only Bet", evs)
 	}
 }
