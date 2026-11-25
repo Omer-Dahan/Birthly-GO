@@ -212,6 +212,15 @@ func cbFieldPick(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	store.UpdateData(user.ID, map[string]any{"editing_field": field})
+	if field == "year" {
+		// The year the user is looking at; the write only lands if it is
+		// still the stored year.
+		base := ""
+		if ev, err := services.GetOwnedEvent(context.Background(), db, user, eventID); err == nil && ev.Year != nil {
+			base = strconv.Itoa(*ev.Year)
+		}
+		store.UpdateData(user.ID, map[string]any{"year_base": base})
+	}
 	store.SetState(user.ID, fsm.EditEventEnteringValue)
 
 	switch field {
@@ -343,6 +352,23 @@ func boundFieldValue(b *gotgbot.Bot, ctx *ext.Context, wantField string) (string
 	return value, true
 }
 
+// yearBase returns the year recorded when the year prompt opened. Without a
+// record (state set up some other way) it falls back to the year just read.
+func yearBase(store *fsm.Store, userID int64, current *int) *int {
+	raw, ok := store.GetData(userID)["year_base"].(string)
+	if !ok {
+		return current
+	}
+	if raw == "" {
+		return nil
+	}
+	y, err := strconv.Atoi(raw)
+	if err != nil {
+		return current
+	}
+	return &y
+}
+
 // applyField persists field=value on the event currently being edited
 // (tracked in FSM data), then returns to the S6 field picker.
 func applyField(b *gotgbot.Bot, ctx *ext.Context, field string, value *string) error {
@@ -364,10 +390,19 @@ func applyField(b *gotgbot.Bot, ctx *ext.Context, field string, value *string) e
 		}
 		return err
 	}
-	setEventField(event, field, value)
-	if _, err := services.UpdateEvent(context.Background(), db, user, event); err != nil {
+	if field == "year" {
+		_, err = services.UpdateEventYear(context.Background(), db, user, eventID, yearBase(store, user.ID, event.Year), nil)
+	} else {
+		setEventField(event, field, value)
+		_, err = services.UpdateEvent(context.Background(), db, user, event)
+	}
+	if err != nil {
 		if isNotFound(err) {
 			NotFoundAlert(b, ctx.CallbackQuery, user.Language)
+			return nil
+		}
+		if isConflict(err) {
+			AnswerCallback(b, ctx.CallbackQuery, i18n.T("error.conflict", user.Language, nil))
 			return nil
 		}
 		return err
@@ -574,11 +609,21 @@ func msgFieldValue(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 		return err
 	}
-	setEventField(event, field, &value)
-	updated, err := services.UpdateEvent(context.Background(), db, user, event)
+	var updated *models.Event
+	if field == "year" {
+		y, _ := strconv.Atoi(value)
+		updated, err = services.UpdateEventYear(context.Background(), db, user, eventID, yearBase(store, user.ID, event.Year), &y)
+	} else {
+		setEventField(event, field, &value)
+		updated, err = services.UpdateEvent(context.Background(), db, user, event)
+	}
 	if err != nil {
 		if isNotFound(err) {
 			_, sendErr := ctx.EffectiveMessage.Reply(b, i18n.T("error.not_found", user.Language, nil), nil)
+			return sendErr
+		}
+		if isConflict(err) {
+			_, sendErr := ctx.EffectiveMessage.Reply(b, i18n.T("error.conflict", user.Language, nil), nil)
 			return sendErr
 		}
 		return err

@@ -71,6 +71,11 @@ func isNotFound(err error) bool {
 	return ok
 }
 
+func isConflict(err error) bool {
+	_, ok := err.(*services.ConflictErr)
+	return ok
+}
+
 func cbEventView(b *gotgbot.Bot, ctx *ext.Context) error {
 	user := User(ctx)
 	db := router.DBFromContext(ctx)

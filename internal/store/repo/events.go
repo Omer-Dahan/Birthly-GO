@@ -246,6 +246,23 @@ func (r *EventRepo) Update(ctx context.Context, e *models.Event) (*models.Event,
 	return r.GetOwned(ctx, e.ID)
 }
 
+// UpdateYear writes only the year column (plus updated_at), and only while the
+// stored year still equals oldYear (nil matches NULL). It reports whether a row
+// was changed, so a concurrent change to the year shows up as false instead of
+// being overwritten. Every other column is left untouched.
+func (r *EventRepo) UpdateYear(ctx context.Context, id int64, oldYear, newYear *int) (bool, error) {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE events SET year = ?, updated_at = ?
+		 WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND year IS ?`,
+		newYear, formatDateTime(time.Now()), id, r.userID, oldYear,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 func (r *EventRepo) SoftDelete(ctx context.Context, id int64) error {
 	_, err := r.db.ExecContext(ctx,
 		`UPDATE events SET deleted_at = ? WHERE id = ? AND user_id = ?`,

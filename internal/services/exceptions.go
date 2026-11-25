@@ -15,3 +15,9 @@ func (e *NotFoundErr) Error() string { return e.Message }
 type LimitErr struct{ Message string }
 
 func (e *LimitErr) Error() string { return e.Message }
+
+// ConflictErr is returned when a guarded write finds the row changed since the
+// caller read it.
+type ConflictErr struct{ Message string }
+
+func (e *ConflictErr) Error() string { return e.Message }

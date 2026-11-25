@@ -11,6 +11,7 @@
   "error.generic": "😕 משהו השתבש. נסה שוב בעוד רגע.",
   "error.generic_with_code": "😕 משהו השתבש. נסה שוב בעוד רגע. (קוד: {code})",
   "error.not_found": "הפריט הזה כבר לא קיים.",
+  "error.conflict": "האירוע השתנה בינתיים. פתחו אותו מחדש ונסו שוב.",
   "error.rate_limit": "רגע, נשמה 😅 קצת לאט יותר.",
   "error.too_long": "זה ארוך מדי · עד {max} תווים.",
   "error.limit_reached": "הגעת למקסימום {max}. אם אתם צריכים יותר - פנו אל: @YD_IL",

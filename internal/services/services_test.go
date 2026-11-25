@@ -587,3 +587,47 @@ func TestUpdateSettings_MultipleFieldsPersistTogether(t *testing.T) {
 		t.Errorf("SilentNotifications = false, want true to have persisted")
 	}
 }
+
+func TestUpdateEventYear_KeepsConcurrentSecondaryDate(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	user := mustUser(t, ctx, db, 7101)
+	y := 5744
+	ev, err := CreateMinimalEvent(ctx, db, user, NewEventInput{
+		FirstName: "Avi", Month: 10, Day: 26, Year: &y, CalendarType: core.CalendarTypeHebrew,
+	}, 100)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Another writer adds a secondary date after the edit flow opened.
+	other, _ := repo.NewEventRepo(db, user.ID).GetOwned(ctx, ev.ID)
+	sm, sd := 12, 31
+	other.SecondaryMonth, other.SecondaryDay = &sm, &sd
+	if _, err := UpdateEvent(ctx, db, user, other); err != nil {
+		t.Fatalf("concurrent update: %v", err)
+	}
+
+	ny := 5745
+	got, err := UpdateEventYear(ctx, db, user, ev.ID, ev.Year, &ny)
+	if err != nil {
+		t.Fatalf("UpdateEventYear: %v", err)
+	}
+	if got.Year == nil || *got.Year != 5745 {
+		t.Errorf("year = %v, want 5745", got.Year)
+	}
+	if got.SecondaryMonth == nil || *got.SecondaryMonth != 12 || got.SecondaryDay == nil || *got.SecondaryDay != 31 {
+		t.Errorf("concurrent secondary date lost: %v/%v", got.SecondaryMonth, got.SecondaryDay)
+	}
+
+	// The year changed under the caller: a stale old year must conflict.
+	nz := 5746
+	if _, err := UpdateEventYear(ctx, db, user, ev.ID, ev.Year, &nz); err == nil {
+		t.Error("stale old year should conflict")
+	} else if _, ok := err.(*ConflictErr); !ok {
+		t.Errorf("err = %T, want *ConflictErr", err)
+	}
+	again, _ := repo.NewEventRepo(db, user.ID).GetOwned(ctx, ev.ID)
+	if *again.Year != 5745 {
+		t.Errorf("conflicting write changed year to %d", *again.Year)
+	}
+}

@@ -97,6 +97,30 @@ func UpdateEvent(ctx context.Context, db repo.DBTX, user *models.User, event *mo
 	return events.Update(ctx, event)
 }
 
+// UpdateEventYear changes only the year of an event, and only if its year is
+// still oldYear. Nothing else on the row is written, so a concurrent change to
+// any other column (a secondary date, a phone, ...) survives. next_occurrence
+// does not depend on the year, so it is not touched either. A changed year
+// yields *ConflictErr, a missing event *NotFoundErr.
+func UpdateEventYear(ctx context.Context, db repo.DBTX, user *models.User, eventID int64, oldYear, newYear *int) (*models.Event, error) {
+	events := repo.NewEventRepo(db, user.ID)
+	ok, err := events.UpdateYear(ctx, eventID, oldYear, newYear)
+	if err != nil {
+		return nil, err
+	}
+	event, err := events.GetOwned(ctx, eventID)
+	if err != nil {
+		return nil, err
+	}
+	if event == nil || event.DeletedAt != nil {
+		return nil, &NotFoundErr{Message: fmt.Sprintf("event %d not found for user %d", eventID, user.ID)}
+	}
+	if !ok {
+		return nil, &ConflictErr{Message: fmt.Sprintf("event %d year changed concurrently", eventID)}
+	}
+	return event, nil
+}
+
 // DeleteEvent soft-deletes event_id (30-day trash, SPEC.md chapter 20).
 func DeleteEvent(ctx context.Context, db repo.DBTX, user *models.User, eventID int64) (*models.Event, error) {
 	event, err := GetOwnedEvent(ctx, db, user, eventID)
