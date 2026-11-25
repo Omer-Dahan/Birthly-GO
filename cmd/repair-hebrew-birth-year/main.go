@@ -18,17 +18,28 @@ import (
 const backupRetention = 7
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
-	dbPath := flag.String("db-path", "data/birthly.db", "path to the SQLite database")
-	apply := flag.Bool("apply", false, "write the repairs (default is dry-run)")
-	backupDir := flag.String("backup-dir", "data/backups", "directory for the pre-apply backup snapshot")
-	flag.Parse()
+func run(args []string) error {
+	fs := flag.NewFlagSet("repair-hebrew-birth-year", flag.ContinueOnError)
+	dbPath := fs.String("db-path", "data/birthly.db", "path to the SQLite database")
+	apply := fs.Bool("apply", false, "write the repairs (default is dry-run)")
+	backupDir := fs.String("backup-dir", "data/backups", "directory for the pre-apply backup snapshot")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	// store.Open runs migrations and would create an empty database for a
+	// mistyped path, so the file must already exist.
+	if st, err := os.Stat(*dbPath); err != nil {
+		return fmt.Errorf("database %s does not exist or is unreadable (refusing to create one): %w", *dbPath, err)
+	} else if st.IsDir() {
+		return fmt.Errorf("database path %s is a directory", *dbPath)
+	}
 
 	db, err := store.Open(*dbPath)
 	if err != nil {

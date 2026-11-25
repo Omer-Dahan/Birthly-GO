@@ -11,6 +11,15 @@ Tool: `cmd/repair-hebrew-birth-year` (logic in `internal/backfill/hebyear.go`).
 It only ever changes `events.year` (+1) and `updated_at`. Month, day, the
 secondary date and next-occurrence columns do not depend on the year.
 
+**Ordering warning: run this repair BEFORE anyone uses the year edit.** The
+tool relies on the stored Gregorian secondary date as evidence. A year edit
+rewrites that evidence, so an edited row can no longer be proven wrong and is
+left untouched. Keep the bot stopped (or the year edit unused) until the repair
+has been applied.
+
+The tool refuses to run if `--db-path` does not point at an existing file, so a
+mistyped path never creates an empty database.
+
 ## The provability signal
 
 A row is fixed only when ALL hold: not deleted, birthday, `calendar_type =
