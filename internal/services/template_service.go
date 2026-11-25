@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"birthly/internal/core"
 	"birthly/internal/i18n"
@@ -53,8 +54,11 @@ func PickTemplate(ctx context.Context, db repo.DBTX, user *models.User, event *m
 //   - {nickname}     -> falls back to first_name.
 //   - {relation}     -> omitted (replaced with empty string).
 func RenderTemplate(tpl *models.GreetingTemplate, event *models.Event, user *models.User) string {
-	today := UserToday(user)
-	age, hasAge := core.AgeAt(event.CalendarType, event.Year, today)
+	return renderTemplateOn(tpl, event, user, UserToday(user))
+}
+
+func renderTemplateOn(tpl *models.GreetingTemplate, event *models.Event, user *models.User, today time.Time) string {
+	age, hasAge := greetingAge(event, today)
 
 	body := tpl.Body
 
@@ -127,7 +131,7 @@ func BuildAIPrompt(event *models.Event, user *models.User, tone string) string {
 	toneLabel := i18n.T("greeting.tone."+tone, lang, nil)
 
 	today := UserToday(user)
-	age, hasAge := core.AgeAt(event.CalendarType, event.Year, today)
+	age, hasAge := greetingAge(event, today)
 
 	details := []string{
 		"שם: " + name,

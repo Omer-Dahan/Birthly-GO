@@ -160,3 +160,34 @@ func TestRenderReminder_AgePerCalendarTrack(t *testing.T) {
 		t.Errorf("hebrew track should say 42: %q", heb)
 	}
 }
+
+// A birth after sunset on 31 Dec 1983 is 26 Tevet 5744 (1 Jan 1984) but the
+// stored civil date is 31/12: the Gregorian track must say 43 on 2026-12-31,
+// in the reminder and in the greeting and AI prompt the reminder opens.
+func TestRenderReminder_AfterSunsetBirthGregorianAge(t *testing.T) {
+	user, event, rule := rendererFixtures()
+	user.Language = core.LanguageEn
+	user.Timezone = "UTC"
+	year := 5744
+	sec, secM, secD := core.CalendarTypeGregorian, 12, 31
+	event.CalendarType = core.CalendarTypeHebrew
+	event.Year, event.Month, event.Day = &year, 10, 26 // 26 Tevet (Nisan = 1)
+	event.SecondaryCalendarType, event.SecondaryMonth, event.SecondaryDay = &sec, &secM, &secD
+	occ := time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC)
+	hebOcc := time.Date(2027, 1, 5, 0, 0, 0, 0, time.UTC)
+	event.NextOccurrence, event.SecondaryNextOccurrence = &hebOcc, &occ
+
+	if got := RenderReminder(user, event, rule, occ, core.CalendarTypeGregorian); !strings.Contains(got, "Turning <b>43</b>") {
+		t.Errorf("gregorian reminder should say 43: %q", got)
+	}
+	if age, _ := greetingAge(event, occ); age != 43 {
+		t.Errorf("greeting age = %d, want 43", age)
+	}
+	if age, _ := AgeForTrack(event, occ, core.CalendarTypeGregorian); age != 43 {
+		t.Errorf("track age = %d, want 43", age)
+	}
+	tpl := &models.GreetingTemplate{Body: "Happy {age}!"}
+	if got := renderTemplateOn(tpl, event, user, occ); got != "Happy 43!" {
+		t.Errorf("greeting text = %q, want Happy 43!", got)
+	}
+}

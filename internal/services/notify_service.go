@@ -148,16 +148,7 @@ func RenderReminder(user *models.User, event *models.Event, rule *models.Reminde
 	return strings.Join(lines, "\n")
 }
 
-// reminderAge returns the age the given track is celebrating. The Hebrew track
-// counts Hebrew years; the Gregorian track of a Hebrew-primary event counts
-// Gregorian years from the Gregorian date of the stored Hebrew birth date, so
-// the two differ around Rosh Hashana.
+// reminderAge returns the age the given track is celebrating.
 func reminderAge(event *models.Event, occurrence time.Time, trackCalendarType string) (int, bool) {
-	if event.CalendarType == core.CalendarTypeHebrew && trackCalendarType == core.CalendarTypeGregorian && event.Year != nil {
-		birth, err := core.ToGregorian(*event.Year, event.Month, event.Day)
-		if err == nil {
-			return occurrence.Year() - birth.Year(), true
-		}
-	}
-	return core.AgeAt(event.CalendarType, event.Year, occurrence)
+	return AgeForTrack(event, occurrence, trackCalendarType)
 }
