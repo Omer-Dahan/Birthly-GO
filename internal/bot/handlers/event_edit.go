@@ -400,7 +400,7 @@ func setEventField(event *models.Event, field string, value *string) {
 // in a non-leap Gregorian year are rejected.
 func parseEditYear(event *models.Event, raw string, now time.Time, adarPolicy string) (int, error) {
 	if event.CalendarType == core.CalendarTypeHebrew {
-		year, err := core.ParseHebrewYearInputFor(raw, event.Month, event.Day, adarPolicy)
+		year, err := core.ParseHebrewYearInputAnchored(raw, event.Month, event.Day, adarPolicy, event.SecondaryMonth, event.SecondaryDay)
 		if err != nil {
 			return 0, err
 		}
@@ -427,6 +427,20 @@ func parseEditYear(event *models.Event, raw string, now time.Time, adarPolicy st
 }
 
 var errBadYear = errors.New("❌ שנה לא תקינה.")
+
+// yearErrorText is the user-facing text for a year parse error. An ambiguous
+// Gregorian year (a Tevet birthday near New Year can sit in two Hebrew
+// years) asks which date is right instead of guessing.
+func yearErrorText(err error, user *models.User) string {
+	var amb *core.AmbiguousHebrewYearError
+	if errors.As(err, &amb) {
+		return fmt.Sprintf("🤔 השנה הזו יכולה להתאים לשתי שנים עבריות:\n• %d · %s\n• %d · %s\n\nאיזה תאריך נכון? שלח את השנה העברית הנכונה (למשל %d).",
+			amb.Candidates[0], core.FormatDate(amb.Dates[0], user.DateFormat),
+			amb.Candidates[1], core.FormatDate(amb.Dates[1], user.DateFormat),
+			amb.Candidates[1])
+	}
+	return err.Error()
+}
 
 // anchorHebrewYear uses a stored Gregorian secondary date as the anchor when
 // a Hebrew event's year was typed as a Gregorian year: of the two candidate
@@ -484,7 +498,7 @@ func msgFieldValue(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 		year, err := parseEditYear(ev, raw, timeNow(), user.AdarPolicy)
 		if err != nil {
-			_, sendErr := ctx.EffectiveMessage.Reply(b, err.Error(), nil)
+			_, sendErr := ctx.EffectiveMessage.Reply(b, yearErrorText(err, user), nil)
 			return sendErr
 		}
 		year = anchorHebrewYear(ev, raw, year, user)

@@ -283,7 +283,7 @@ func msgAddHebrewYear(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	year, err := core.ParseHebrewYearInputFor(ctx.EffectiveMessage.Text, hebMonth, hebDay, user.AdarPolicy)
 	if err != nil {
-		_, sendErr := ctx.EffectiveMessage.Reply(b, err.Error(), nil)
+		_, sendErr := ctx.EffectiveMessage.Reply(b, yearErrorText(err, user), nil)
 		return sendErr
 	}
 

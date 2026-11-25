@@ -293,14 +293,39 @@ func ParseHebrewYearInput(raw string) (int, error) {
 	return 0, validationErrorf("❌ שנה לא תקינה.")
 }
 
-// ParseHebrewYearInputFor is ParseHebrewYearInput aware of the birthday's
-// Hebrew month and day. A typed Hebrew year is returned as is. A typed
-// Gregorian year is converted to the Hebrew year that contains that exact
-// civil date: +3760 for a birthday from Tevet to Elul (January to
-// September) and +3761 from Tishrei (after Rosh Hashana) to December.
-// Whichever of the two converts back into the typed Gregorian year wins; when
-// both do (a Tevet birthday near New Year) the older +3760 rule is kept.
+// AmbiguousHebrewYearError is returned when a typed Gregorian year matches
+// two Hebrew years for the birthday's Hebrew month/day and nothing stored
+// can decide between them. This happens for Tevet (and a few days of Kislev
+// and Shevat): the month straddles 1 January, so both greg+3760 and
+// greg+3761 fall inside the typed civil year. The caller must ask the user
+// which date is right.
+type AmbiguousHebrewYearError struct {
+	Candidates [2]int       // Hebrew years, ascending
+	Dates      [2]time.Time // exact Gregorian birth date for each candidate
+}
+
+func (e *AmbiguousHebrewYearError) Error() string {
+	return fmt.Sprintf("ambiguous hebrew year: %d or %d", e.Candidates[0], e.Candidates[1])
+}
+
+// ParseHebrewYearInputFor is ParseHebrewYearInputAnchored without a stored
+// Gregorian date: an input that matches two Hebrew years is an
+// *AmbiguousHebrewYearError.
 func ParseHebrewYearInputFor(raw string, hMonth, hDay int, adarPolicy string) (int, error) {
+	return ParseHebrewYearInputAnchored(raw, hMonth, hDay, adarPolicy, nil, nil)
+}
+
+// ParseHebrewYearInputAnchored is ParseHebrewYearInput aware of the
+// birthday's Hebrew month and day. A typed Hebrew year is returned as is. A
+// typed Gregorian year is converted to the Hebrew year whose exact birth
+// date falls in that civil year: of greg+3760 (Tevet to Elul, January to
+// September, and early Tevet/Shevat days in late December) and greg+3761
+// (Tishrei to December), whichever converts back into the typed year wins.
+// Both can match (Tevet straddles 1 January, and Kislev/Shevat edges too);
+// then the stored Gregorian month/day (secMonth, secDay), when given,
+// picks the candidate that lands on it, and without one the result is an
+// *AmbiguousHebrewYearError rather than a silent default.
+func ParseHebrewYearInputAnchored(raw string, hMonth, hDay int, adarPolicy string, secMonth, secDay *int) (int, error) {
 	year, err := ParseHebrewYearInput(raw)
 	if err != nil {
 		return 0, err
@@ -310,13 +335,32 @@ func ParseHebrewYearInputFor(raw string, hMonth, hDay int, adarPolicy string) (i
 	if greg < MinYearGregorian || greg > MaxYearGregorian || (greg >= MinYearHebrew && greg <= MaxYearHebrew) {
 		return year, nil
 	}
+	var matches []int
+	var dates []time.Time
 	for _, h := range [2]int{greg + 3760, greg + 3761} {
 		d, err := ToGregorian(h, ResolveMonth(h, hMonth, adarPolicy), hDay)
 		if err == nil && d.Year() == greg {
-			return h, nil
+			matches = append(matches, h)
+			dates = append(dates, d)
 		}
 	}
-	return year, nil
+	switch len(matches) {
+	case 0:
+		return year, nil
+	case 1:
+		return matches[0], nil
+	}
+	if secMonth != nil && secDay != nil {
+		for i, d := range dates {
+			if int(d.Month()) == *secMonth && d.Day() == *secDay {
+				return matches[i], nil
+			}
+		}
+	}
+	return 0, &AmbiguousHebrewYearError{
+		Candidates: [2]int{matches[0], matches[1]},
+		Dates:      [2]time.Time{dates[0], dates[1]},
+	}
 }
 
 // isAllASCIIDigits mirrors Python's str.isdigit() closely enough for this
