@@ -121,3 +121,34 @@ func TestBackup_MarkerSymlinkNotFollowed(t *testing.T) {
 		t.Fatalf("symlink target modified: %q, %v", got, err)
 	}
 }
+
+func TestBackup_PruneIgnoresForeignDBAndStaleMarker(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	backupDir := t.TempDir()
+
+	foreign := filepath.Join(backupDir, "birthly_backfill_20200101_000000.db")
+	if err := os.WriteFile(foreign, []byte("foreign"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	marker := foreign + ownerMarkerSuffix
+	if err := os.WriteFile(marker, []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 5; i++ {
+		if _, err := Backup(ctx, db, backupDir, base.Add(time.Duration(i)*time.Minute), 2, "birthly_backfill"); err != nil {
+			t.Fatalf("Backup #%d: %v", i, err)
+		}
+	}
+	for _, p := range []string{foreign, marker} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s should survive prune: %v", filepath.Base(p), err)
+		}
+	}
+	entries, _ := os.ReadDir(backupDir)
+	if n := countDB(entries); n != 3 { // 2 retained + foreign
+		t.Errorf("got %d db files, want 3", n)
+	}
+}

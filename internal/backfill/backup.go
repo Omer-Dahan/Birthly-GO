@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -44,7 +45,12 @@ func Backup(ctx context.Context, db *sql.DB, backupDir string, now time.Time, re
 		return "", fmt.Errorf("VACUUM INTO: %w", err)
 	}
 
-	// Mark the snapshot as this tool's own; pruning only ever touches marked files.
+	// Track the snapshot in memory; pruning only ever deletes files this run created.
+	createdMu.Lock()
+	createdThisRun[absDest] = struct{}{}
+	createdMu.Unlock()
+
+	// The marker is documentation only; it never authorizes a delete.
 	if err := writeMarker(backupDir, dest+ownerMarkerSuffix); err != nil {
 		return "", fmt.Errorf("writing backup marker: %w", err)
 	}
@@ -53,8 +59,13 @@ func Backup(ctx context.Context, db *sql.DB, backupDir string, now time.Time, re
 	return dest, nil
 }
 
-// ownerMarkerSuffix names the sidecar file that marks a snapshot as created
-// by Backup. A database file without its marker is never pruned.
+var (
+	createdMu      sync.Mutex
+	createdThisRun = map[string]struct{}{}
+)
+
+// ownerMarkerSuffix names the documentation sidecar written next to each
+// snapshot. It is never consulted when deciding what to delete.
 const ownerMarkerSuffix = ".birthly-backup"
 
 // checkMarkerPath refuses a marker that would land outside backupDir or that
@@ -109,8 +120,15 @@ func pruneBackups(backupDir string, retention int, prefix string, protect []stri
 		if !pattern.MatchString(e.Name()) || !e.Type().IsRegular() {
 			continue
 		}
-		// Only snapshots carrying our marker (a regular file) are ours.
-		if mi, err := os.Lstat(filepath.Join(backupDir, e.Name()+ownerMarkerSuffix)); err != nil || !mi.Mode().IsRegular() {
+		// Only files this run created (tracked in memory) are ours.
+		abs, err := filepath.Abs(filepath.Join(backupDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		createdMu.Lock()
+		_, ours := createdThisRun[abs]
+		createdMu.Unlock()
+		if !ours {
 			continue
 		}
 		names = append(names, e.Name())
@@ -140,7 +158,13 @@ func pruneBackups(backupDir string, retention int, prefix string, protect []stri
 				continue
 			}
 		}
-		os.Remove(path)
-		os.Remove(path + ownerMarkerSuffix)
+		if os.Remove(path) == nil {
+			if abs, err := filepath.Abs(path); err == nil {
+				createdMu.Lock()
+				delete(createdThisRun, abs)
+				createdMu.Unlock()
+			}
+			os.Remove(path + ownerMarkerSuffix)
+		}
 	}
 }
