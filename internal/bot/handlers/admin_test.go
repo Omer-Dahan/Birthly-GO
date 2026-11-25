@@ -15,6 +15,7 @@ import (
 	"birthly/internal/services"
 	"birthly/internal/store"
 	"birthly/internal/store/models"
+	"birthly/internal/version"
 )
 
 func ctxWithUser(user *models.User) *ext.Context {
@@ -188,5 +189,52 @@ func TestToggleBlockUser_RoundTrip(t *testing.T) {
 	ok, err = services.ToggleBlockUser(ctx, db, admin.ID, 999999, true)
 	if err != nil || ok {
 		t.Fatalf("ToggleBlockUser(missing user) = %v, %v, want false,nil", ok, err)
+	}
+}
+
+func versionCtx(user *models.User) *ext.Context {
+	ctx := ctxWithUser(user)
+	ctx.EffectiveMessage = &gotgbot.Message{MessageId: 1, Chat: gotgbot.Chat{Id: 5}}
+	return ctx
+}
+
+func TestVersionCommand_AdminSeesStamp(t *testing.T) {
+	version.Version, version.Commit, version.Date = "v9.9.9", "deadbeefcafe", "2026-11-25T10:00:00Z"
+	t.Cleanup(func() { version.Version, version.Commit, version.Date = "", "", "" })
+
+	client := &fakeEditClient{}
+	err := requireAdminMsg(cmdVersion)(testEditBot(client), versionCtx(&models.User{ID: 1, IsAdmin: true}))
+	if err != nil {
+		t.Fatalf("/version for admin: %v", err)
+	}
+	if len(client.sent) != 1 {
+		t.Fatalf("sent %d messages, want 1", len(client.sent))
+	}
+	for _, want := range []string{version.Product, "v9.9.9", "deadbeefcafe", "2026-11-25T10:00:00Z"} {
+		if !strings.Contains(client.sent[0], want) {
+			t.Errorf("reply %q does not contain %q", client.sent[0], want)
+		}
+	}
+}
+
+func TestVersionCommand_NonAdminRefusedWithoutLeak(t *testing.T) {
+	version.Version, version.Commit, version.Date = "v9.9.9", "deadbeefcafe", "2026-11-25T10:00:00Z"
+	t.Cleanup(func() { version.Version, version.Commit, version.Date = "", "", "" })
+
+	client := &fakeEditClient{}
+	err := requireAdminMsg(cmdVersion)(testEditBot(client), versionCtx(&models.User{ID: 2, IsAdmin: false}))
+	if err != ext.ContinueGroups {
+		t.Errorf("/version for non-admin = %v, want ext.ContinueGroups", err)
+	}
+	if len(client.sent) != 0 {
+		t.Errorf("non-admin got a reply: %q", client.sent)
+	}
+}
+
+func TestVersionCommand_UnstampedReportsDev(t *testing.T) {
+	version.Version, version.Commit, version.Date = "", "", ""
+	text := versionText()
+	if strings.Count(text, "<code>dev</code>") != 3 {
+		t.Errorf("unstamped text = %q, want three \"dev\" fields", text)
 	}
 }

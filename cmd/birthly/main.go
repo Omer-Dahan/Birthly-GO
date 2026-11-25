@@ -21,6 +21,7 @@ import (
 	"birthly/internal/scheduler"
 	"birthly/internal/services"
 	"birthly/internal/store"
+	"birthly/internal/version"
 )
 
 // fsmMaxIdleSeconds abandons in-progress flows/state after 6h of
@@ -117,7 +118,9 @@ func run() error {
 		}
 	}()
 
-	logger.Info("bot_starting", "username", bot.Username)
+	stamp := version.Get()
+	logger.Info("bot_starting", "username", bot.Username,
+		"version", stamp.Version, "commit", stamp.Commit, "build_date", stamp.Date)
 	updater.Idle()
 	logger.Info("bot_stopped")
 	return nil

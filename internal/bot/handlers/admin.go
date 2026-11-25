@@ -18,6 +18,7 @@ import (
 	"birthly/internal/bot/keyboards"
 	"birthly/internal/bot/router"
 	"birthly/internal/services"
+	"birthly/internal/version"
 )
 
 // RegisterAdmin wires the admin panel — port of app/handlers/admin.py.
@@ -35,6 +36,7 @@ func RegisterAdmin(dispatcher *ext.Dispatcher) {
 	dispatcher.AddHandler(handlers.NewCallback(adminActionFilter("home"), requireAdminCB(cbAdminHome)))
 
 	dispatcher.AddHandler(handlers.NewCallback(adminActionFilter("stats"), requireAdminCB(cbAdminStatsCallback)))
+	dispatcher.AddHandler(handlers.NewCommand("version", requireAdminMsg(cmdVersion)))
 	dispatcher.AddHandler(handlers.NewCommand("dbstats", requireAdminMsg(cmdDbstats)))
 
 	dispatcher.AddHandler(handlers.NewCallback(adminActionFilter("bc"), requireAdminCB(cbAdminBcCallback)))
@@ -154,6 +156,17 @@ func cbAdminStatsCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 	AnswerCallback(b, ctx.CallbackQuery, "")
 	return nil
+}
+
+func versionText() string {
+	v := version.Get()
+	return fmt.Sprintf("🏷 <b>%s</b>\nגרסה: <code>%s</code>\nקומיט: <code>%s</code>\nנבנה: <code>%s</code>",
+		version.Product, v.Version, v.Commit, v.Date)
+}
+
+func cmdVersion(b *gotgbot.Bot, ctx *ext.Context) error {
+	_, err := ctx.EffectiveMessage.Reply(b, versionText(), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	return err
 }
 
 func cmdDbstats(b *gotgbot.Bot, ctx *ext.Context) error {
