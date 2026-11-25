@@ -2,6 +2,7 @@ package keyboards
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 
@@ -198,12 +199,31 @@ func fieldDisplayValue(lang, field string, ev EventFieldValues) string {
 	}
 }
 
+// FieldPickValue encodes a picker button's value as "<field>.<event id>" so
+// an old picker message can only ever act on the event it was rendered for.
+func FieldPickValue(field string, eventID int64) string {
+	return field + "." + strconv.FormatInt(eventID, 10)
+}
+
+// ParseFieldPickValue is the inverse of FieldPickValue.
+func ParseFieldPickValue(v string) (string, int64, bool) {
+	i := strings.LastIndex(v, ".")
+	if i <= 0 {
+		return "", 0, false
+	}
+	id, err := strconv.ParseInt(v[i+1:], 10, 64)
+	if err != nil {
+		return "", 0, false
+	}
+	return v[:i], id, true
+}
+
 // MoreDetailsKeyboard is the S6 field picker. Each button shows the field's
 // current value.
-func MoreDetailsKeyboard(lang string, ev EventFieldValues) *gotgbot.InlineKeyboardMarkup {
+func MoreDetailsKeyboard(lang string, eventID int64, ev EventFieldValues) *gotgbot.InlineKeyboardMarkup {
 	fieldBtn := func(field string) gotgbot.InlineKeyboardButton {
 		value := fieldDisplayValue(lang, field, ev)
-		return flowValBtn(i18n.T("more."+field, lang, map[string]any{"value": value}), "field", field)
+		return flowValBtn(i18n.T("more."+field, lang, map[string]any{"value": value}), "field", FieldPickValue(field, eventID))
 	}
 	buttons := make([]gotgbot.InlineKeyboardButton, len(MoreDetailsFields))
 	for i, f := range MoreDetailsFields {
@@ -211,7 +231,7 @@ func MoreDetailsKeyboard(lang string, ev EventFieldValues) *gotgbot.InlineKeyboa
 	}
 	rows := BuildGrid(buttons, 2)
 
-	typeBtn := flowValBtn(i18n.T("more.event_type", lang, map[string]any{"value": fieldDisplayValue(lang, "event_type", ev)}), "field", "event_type")
+	typeBtn := flowValBtn(i18n.T("more.event_type", lang, map[string]any{"value": fieldDisplayValue(lang, "event_type", ev)}), "field", FieldPickValue("event_type", eventID))
 	doneBtn := flowBtn(i18n.T("more.done", lang, nil), "skip")
 	rows = append(rows, []gotgbot.InlineKeyboardButton{typeBtn}, []gotgbot.InlineKeyboardButton{doneBtn})
 	return &gotgbot.InlineKeyboardMarkup{InlineKeyboard: rows}

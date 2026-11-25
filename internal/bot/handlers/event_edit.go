@@ -67,7 +67,7 @@ func renderMoreDetails(ctx context.Context, b *gotgbot.Bot, cq *gotgbot.Callback
 	}
 	name := core.Esc(core.FormatName(event.FirstName, event.LastName))
 	text := i18n.T("more.title", user.Language, map[string]any{"name": name})
-	return EditOrIgnore(b, cq, text, keyboards.MoreDetailsKeyboard(user.Language, eventFieldValues(event)))
+	return EditOrIgnore(b, cq, text, keyboards.MoreDetailsKeyboard(user.Language, eventID, eventFieldValues(event)))
 }
 
 func cbEventEditMenu(b *gotgbot.Bot, ctx *ext.Context) error {
@@ -186,13 +186,20 @@ func cbFieldPick(b *gotgbot.Bot, ctx *ext.Context) error {
 	if err != nil || decoded.Flow == nil {
 		return err
 	}
-	field := ""
+	raw := ""
 	if decoded.Flow.Value != nil {
-		field = *decoded.Flow.Value
+		raw = *decoded.Flow.Value
+	}
+	field, pickedID, ok := keyboards.ParseFieldPickValue(raw)
+	if !ok {
+		NotFoundAlert(b, ctx.CallbackQuery, user.Language)
+		return nil
 	}
 
+	// The button must belong to the event currently being edited; an old
+	// picker message for another event fails cleanly.
 	eventID, ok := fsmEventID(store, user.ID)
-	if !ok {
+	if state, _ := store.GetState(user.ID); !ok || eventID != pickedID || state != fsm.EditEventChoosingField {
 		NotFoundAlert(b, ctx.CallbackQuery, user.Language)
 		return nil
 	}
@@ -559,7 +566,7 @@ func msgFieldValue(b *gotgbot.Bot, ctx *ext.Context) error {
 	name := core.Esc(core.FormatName(updated.FirstName, updated.LastName))
 	text := i18n.T("edit.field_saved", user.Language, nil) + "\n\n" + i18n.T("more.title", user.Language, map[string]any{"name": name})
 	_, sendErr := ctx.EffectiveMessage.Reply(b, text, &gotgbot.SendMessageOpts{
-		ReplyMarkup: keyboards.MoreDetailsKeyboard(user.Language, eventFieldValues(updated)), ParseMode: "HTML",
+		ReplyMarkup: keyboards.MoreDetailsKeyboard(user.Language, updated.ID, eventFieldValues(updated)), ParseMode: "HTML",
 	})
 	return sendErr
 }
@@ -617,7 +624,7 @@ func msgFieldPhoto(b *gotgbot.Bot, ctx *ext.Context) error {
 	name := core.Esc(core.FormatName(updated.FirstName, updated.LastName))
 	text := i18n.T("edit.field_saved", user.Language, nil) + "\n\n" + i18n.T("more.title", user.Language, map[string]any{"name": name})
 	_, sendErr := ctx.EffectiveMessage.Reply(b, text, &gotgbot.SendMessageOpts{
-		ReplyMarkup: keyboards.MoreDetailsKeyboard(user.Language, eventFieldValues(updated)), ParseMode: "HTML",
+		ReplyMarkup: keyboards.MoreDetailsKeyboard(user.Language, updated.ID, eventFieldValues(updated)), ParseMode: "HTML",
 	})
 	return sendErr
 }

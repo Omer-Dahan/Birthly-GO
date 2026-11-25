@@ -12,6 +12,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 
 	"birthly/internal/bot/fsm"
+	"birthly/internal/bot/keyboards"
 	"birthly/internal/bot/router"
 	"birthly/internal/core"
 	"birthly/internal/i18n"
@@ -73,7 +74,7 @@ func TestEditFlow_AddYearToYearlessEvent(t *testing.T) {
 	bot := testEditBot(&fakeEditClient{})
 
 	// Real callback path: the "year" button on the field picker.
-	if err := cbFieldPick(bot, editYearCtx(t, db, user.ID, fsmStore, "ev:field:year", "", user)); err != nil {
+	if err := cbFieldPick(bot, editYearCtx(t, db, user.ID, fsmStore, "ev:field:"+keyboards.FieldPickValue("year", event.ID), "", user)); err != nil {
 		t.Fatalf("cbFieldPick: %v", err)
 	}
 	if state, _ := fsmStore.GetState(user.ID); state != fsm.EditEventEnteringValue {
@@ -207,4 +208,52 @@ type testEvent struct {
 
 func (e *testEvent) model() *models.Event {
 	return &models.Event{CalendarType: e.cal, Month: e.m, Day: e.d}
+}
+
+func TestFieldPick_OldPickerCannotActOnOtherEvent(t *testing.T) {
+	if err := i18n.LoadLocales(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	user, err := services.GetOrCreateUser(ctx, db, 4102, nil, "U", nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := services.CreateMinimalEvent(ctx, db, user, services.NewEventInput{FirstName: "A", Month: 3, Day: 15}, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := services.CreateMinimalEvent(ctx, db, user, services.NewEventInput{FirstName: "B", Month: 5, Day: 6}, 1001)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Picker rendered for the first event.
+	oldData := keyboards.MoreDetailsKeyboard(user.Language, first.ID, eventFieldValues(first)).InlineKeyboard[0][0].CallbackData
+	// Flow then moves to the second event.
+	fsmStore := fsm.NewStore(time.Hour, 200)
+	fsmStore.SetState(user.ID, fsm.EditEventChoosingField)
+	fsmStore.UpdateData(user.ID, map[string]any{"event_id": second.ID})
+	bot := testEditBot(&fakeEditClient{})
+
+	if err := cbFieldPick(bot, editYearCtx(t, db, user.ID, fsmStore, oldData, "", user)); err != nil {
+		t.Fatalf("cbFieldPick: %v", err)
+	}
+	if state, _ := fsmStore.GetState(user.ID); state != fsm.EditEventChoosingField {
+		t.Fatalf("state = %q, stale picker must not advance the flow", state)
+	}
+	if v := fsmStore.GetData(user.ID)["editing_field"]; v != nil {
+		t.Fatalf("editing_field = %v, want unset", v)
+	}
+	got, err := services.GetOwnedEvent(ctx, db, user, second.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Month != second.Month || got.Day != second.Day || got.Year != second.Year {
+		t.Fatalf("second event changed: %+v -> %+v", second, got)
+	}
 }
