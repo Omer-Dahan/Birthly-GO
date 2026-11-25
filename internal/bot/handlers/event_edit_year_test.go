@@ -114,7 +114,7 @@ func TestEditFlow_AddYearToYearlessEvent(t *testing.T) {
 	}
 }
 
-func TestEditFlow_HebrewYearRefreshesSecondaryDate(t *testing.T) {
+func TestEditFlow_HebrewYearKeepsStoredGregorianDate(t *testing.T) {
 	if err := i18n.LoadLocales(); err != nil {
 		t.Fatal(err)
 	}
@@ -128,40 +128,48 @@ func TestEditFlow_HebrewYearRefreshesSecondaryDate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sm, sd := 1, 1 // a stale placeholder secondary date
-	event, err := services.CreateMinimalEvent(ctx, db, user, services.NewEventInput{
-		FirstName: "Noa", Month: 7, Day: 10, CalendarType: core.CalendarTypeHebrew,
-		SecondaryMonth: &sm, SecondaryDay: &sd,
-	}, 1000)
+	// 5750 / 10 Tishrei fell on 1989-10-09; store a deliberately different
+	// month/day (the user's own recorded date) as the anchor.
+	src, err := exactGregorianBirthDate(5750, 7, 10, user.AdarPolicy)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	fsmStore := fsm.NewStore(time.Hour, 200)
-	fsmStore.SetState(user.ID, fsm.EditEventEnteringValue)
-	fsmStore.UpdateData(user.ID, map[string]any{"event_id": event.ID, "editing_field": "year"})
-	bot := testEditBot(&fakeEditClient{})
-
-	if err := msgFieldValue(bot, editYearCtx(t, db, user.ID, fsmStore, "", "5750", user)); err != nil {
-		t.Fatalf("msgFieldValue: %v", err)
-	}
-	got, err := services.GetOwnedEvent(ctx, db, user, event.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Year == nil || *got.Year != 5750 {
-		t.Fatalf("Year = %v, want 5750", got.Year)
-	}
-	want, err := exactGregorianBirthDate(5750, 7, 10, user.AdarPolicy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.SecondaryMonth == nil || got.SecondaryDay == nil ||
-		*got.SecondaryMonth != int(want.Month()) || *got.SecondaryDay != want.Day() {
-		t.Errorf("secondary = %v/%v, want %d/%d recomputed from the new year", got.SecondaryDay, got.SecondaryMonth, want.Day(), int(want.Month()))
-	}
-	if got.SecondaryNextOccurrence == nil {
-		t.Error("secondary next occurrence must be recomputed")
+	sm, sd := int(src.Month()), src.Day()
+	for _, tc := range []struct {
+		name, input string
+		wantYear    int
+	}{{"hebrew input", "5750", 5750}, {"gregorian input", "1989", 5750}} {
+		t.Run(tc.name, func(t *testing.T) {
+			event, err := services.CreateMinimalEvent(ctx, db, user, services.NewEventInput{
+				FirstName: "Noa", Month: 7, Day: 10, CalendarType: core.CalendarTypeHebrew,
+				SecondaryMonth: &sm, SecondaryDay: &sd,
+			}, 1000)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fsmStore := fsm.NewStore(time.Hour, 200)
+			fsmStore.SetState(user.ID, fsm.EditEventEnteringValue)
+			fsmStore.UpdateData(user.ID, map[string]any{"event_id": event.ID, "editing_field": "year"})
+			bot := testEditBot(&fakeEditClient{})
+			if err := msgFieldValue(bot, editYearCtx(t, db, user.ID, fsmStore, "", tc.input, user)); err != nil {
+				t.Fatalf("msgFieldValue: %v", err)
+			}
+			got, err := services.GetOwnedEvent(ctx, db, user, event.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Year == nil || *got.Year != tc.wantYear {
+				t.Fatalf("Year = %v, want %d", got.Year, tc.wantYear)
+			}
+			if got.SecondaryMonth == nil || got.SecondaryDay == nil ||
+				*got.SecondaryMonth != sm || *got.SecondaryDay != sd {
+				t.Errorf("secondary = %v/%v, want %d/%d untouched", got.SecondaryDay, got.SecondaryMonth, sd, sm)
+			}
+			if d, err := exactGregorianBirthDate(*got.Year, 7, 10, user.AdarPolicy); err != nil ||
+				int(d.Month()) != sm || d.Day() != sd {
+				t.Errorf("source date moved: year %d resolves to %v, stored %d/%d", *got.Year, d, sd, sm)
+			}
+		})
 	}
 }
 

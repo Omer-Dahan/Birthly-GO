@@ -428,22 +428,30 @@ func parseEditYear(event *models.Event, raw string, now time.Time, adarPolicy st
 
 var errBadYear = errors.New("❌ שנה לא תקינה.")
 
-// refreshSecondaryDate keeps a dual-date event's Gregorian secondary date in
-// step with a changed Hebrew birth year: it is recomputed from the new year
-// (the same exact-birth-date rule the add flow offers for confirmation).
-// A no-op for events without a secondary date, for Gregorian events, or when
-// the year was cleared.
-func refreshSecondaryDate(event *models.Event, user *models.User) {
-	if event.CalendarType != core.CalendarTypeHebrew || event.Year == nil ||
+// anchorHebrewYear uses a stored Gregorian secondary date as the anchor when
+// a Hebrew event's year was typed as a Gregorian year: of the two candidate
+// Hebrew years (greg+3760, greg+3761) it picks the one whose exact birth date
+// falls on the stored month/day. The stored date itself is never modified; a
+// year edit must not overwrite it. Returns year unchanged when there is no
+// secondary date, no typed Gregorian year, or no candidate matches.
+func anchorHebrewYear(event *models.Event, raw string, year int, user *models.User) int {
+	if event.CalendarType != core.CalendarTypeHebrew ||
 		event.SecondaryMonth == nil || event.SecondaryDay == nil {
-		return
+		return year
 	}
-	greg, err := exactGregorianBirthDate(*event.Year, event.Month, event.Day, user.AdarPolicy)
-	if err != nil {
-		return
+	greg, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || greg < core.MinYearGregorian || greg > core.MaxYearGregorian ||
+		(greg >= core.MinYearHebrew && greg <= core.MaxYearHebrew) {
+		return year
 	}
-	m, d := int(greg.Month()), greg.Day()
-	event.SecondaryMonth, event.SecondaryDay = &m, &d
+	for _, h := range [2]int{greg + 3760, greg + 3761} {
+		d, err := exactGregorianBirthDate(h, event.Month, event.Day, user.AdarPolicy)
+		if err == nil && d.Year() == greg &&
+			int(d.Month()) == *event.SecondaryMonth && d.Day() == *event.SecondaryDay {
+			return h
+		}
+	}
+	return year
 }
 
 func msgFieldValue(b *gotgbot.Bot, ctx *ext.Context) error {
@@ -479,6 +487,7 @@ func msgFieldValue(b *gotgbot.Bot, ctx *ext.Context) error {
 			_, sendErr := ctx.EffectiveMessage.Reply(b, err.Error(), nil)
 			return sendErr
 		}
+		year = anchorHebrewYear(ev, raw, year, user)
 		value = strconv.Itoa(year)
 	} else if field == "event_time" {
 		m := timeRE.FindStringSubmatch(strings.TrimSpace(raw))
@@ -517,9 +526,6 @@ func msgFieldValue(b *gotgbot.Bot, ctx *ext.Context) error {
 		return err
 	}
 	setEventField(event, field, &value)
-	if field == "year" {
-		refreshSecondaryDate(event, user)
-	}
 	updated, err := services.UpdateEvent(context.Background(), db, user, event)
 	if err != nil {
 		if isNotFound(err) {
