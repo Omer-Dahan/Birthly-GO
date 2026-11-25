@@ -397,6 +397,7 @@ func TickReminders(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *confi
 		events2 := repo.NewEventRepo(db, user.ID)
 		for _, event := range events {
 			changed := false
+			oldOcc0, oldSec0 := event.NextOccurrence, event.SecondaryNextOccurrence
 
 			if event.NextOccurrence == nil || event.NextOccurrence.Before(todayLocal) {
 				newOcc, err := core.NextOccurrence(
@@ -442,7 +443,7 @@ func TickReminders(ctx context.Context, bot *gotgbot.Bot, db *sql.DB, cfg *confi
 			}
 
 			if changed {
-				if _, err := events2.Update(ctx, event); err != nil {
+				if _, err := events2.UpdateOccurrences(ctx, event.ID, oldOcc0, event.NextOccurrence, oldSec0, event.SecondaryNextOccurrence); err != nil {
 					return fmt.Errorf("tick_reminders: update recomputed occurrence: %w", err)
 				}
 			}
@@ -494,6 +495,7 @@ func RecomputeOccurrences(ctx context.Context, db *sql.DB, logger *slog.Logger) 
 		}
 		for _, event := range list {
 			changed := false
+			oldOcc0, oldSec0 := event.NextOccurrence, event.SecondaryNextOccurrence
 
 			newOcc, err := core.NextOccurrence(event.CalendarType, event.Month, event.Day, today, user.AdarPolicy, user.Feb29Policy)
 			if err != nil {
@@ -528,7 +530,7 @@ func RecomputeOccurrences(ctx context.Context, db *sql.DB, logger *slog.Logger) 
 			}
 
 			if changed {
-				if _, err := events.Update(ctx, event); err != nil {
+				if _, err := events.UpdateOccurrences(ctx, event.ID, oldOcc0, event.NextOccurrence, oldSec0, event.SecondaryNextOccurrence); err != nil {
 					return err
 				}
 				updated++

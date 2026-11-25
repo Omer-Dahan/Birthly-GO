@@ -393,8 +393,7 @@ func applyField(b *gotgbot.Bot, ctx *ext.Context, field string, value *string) e
 	if field == "year" {
 		_, err = services.UpdateEventYear(context.Background(), db, user, eventID, yearBase(store, user.ID, event.Year), nil)
 	} else {
-		setEventField(event, field, value)
-		_, err = services.UpdateEvent(context.Background(), db, user, event)
+		_, err = services.UpdateEventColumns(context.Background(), db, user, eventID, fieldColumns(field, value))
 	}
 	if err != nil {
 		if isNotFound(err) {
@@ -462,6 +461,25 @@ func setEventField(event *models.Event, field string, value *string) {
 			event.Year = &y
 		}
 	}
+}
+
+// fieldColumns maps an edited field to the single column it owns and its new
+// value, so a save writes that column and nothing else. A nil value clears the
+// column, except for the NOT NULL ones (category, event_type), which are left
+// out like setEventField leaves them.
+func fieldColumns(field string, value *string) map[string]any {
+	col := map[string]string{
+		"category": "category", "relation": "relation", "phone": "phone",
+		"nickname": "nickname", "notes": "notes", "gender": "gender",
+		"event_time": "event_time", "event_type": "event_type", "photo": "photo_file_id",
+	}[field]
+	if col == "" || (value == nil && (col == "category" || col == "event_type")) {
+		return nil
+	}
+	if value == nil {
+		return map[string]any{col: nil}
+	}
+	return map[string]any{col: *value}
 }
 
 // parseEditYear validates a typed birth year for event: a Gregorian year
@@ -638,8 +656,7 @@ func msgFieldValue(b *gotgbot.Bot, ctx *ext.Context) error {
 		y, _ := strconv.Atoi(value)
 		updated, err = services.UpdateEventYear(context.Background(), db, user, eventID, yearBase(store, user.ID, event.Year), &y)
 	} else {
-		setEventField(event, field, &value)
-		updated, err = services.UpdateEvent(context.Background(), db, user, event)
+		updated, err = services.UpdateEventColumns(context.Background(), db, user, eventID, fieldColumns(field, &value))
 	}
 	if err != nil {
 		if isNotFound(err) {
@@ -696,16 +713,7 @@ func msgFieldPhoto(b *gotgbot.Bot, ctx *ext.Context) error {
 	photos := ctx.EffectiveMessage.Photo
 	fileID := photos[len(photos)-1].FileId // largest available resolution
 
-	event, err := services.GetOwnedEvent(context.Background(), db, user, eventID)
-	if err != nil {
-		if isNotFound(err) {
-			_, sendErr := ctx.EffectiveMessage.Reply(b, i18n.T("error.not_found", user.Language, nil), nil)
-			return sendErr
-		}
-		return err
-	}
-	setEventField(event, "photo", &fileID)
-	updated, err := services.UpdateEvent(context.Background(), db, user, event)
+	updated, err := services.UpdateEventColumns(context.Background(), db, user, eventID, fieldColumns("photo", &fileID))
 	if err != nil {
 		if isNotFound(err) {
 			_, sendErr := ctx.EffectiveMessage.Reply(b, i18n.T("error.not_found", user.Language, nil), nil)

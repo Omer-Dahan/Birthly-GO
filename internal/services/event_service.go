@@ -152,15 +152,40 @@ func RestoreEvent(ctx context.Context, db repo.DBTX, user *models.User, eventID 
 	return event, nil
 }
 
-// ToggleMute flips event_id's is_active flag.
-func ToggleMute(ctx context.Context, db repo.DBTX, user *models.User, eventID int64) (*models.Event, error) {
-	event, err := GetOwnedEvent(ctx, db, user, eventID)
+// UpdateEventColumns writes only the named non-date columns of an event (see
+// repo.EventRepo.UpdateColumns) and returns the refreshed row. Year, dates and
+// every column not named stay as stored, whatever snapshot the caller read.
+func UpdateEventColumns(ctx context.Context, db repo.DBTX, user *models.User, eventID int64, set map[string]any) (*models.Event, error) {
+	if len(set) == 0 {
+		return GetOwnedEvent(ctx, db, user, eventID)
+	}
+	events := repo.NewEventRepo(db, user.ID)
+	ok, err := events.UpdateColumns(ctx, eventID, set)
 	if err != nil {
 		return nil, err
 	}
-	event.IsActive = !event.IsActive
+	return reloadAfterWrite(ctx, events, user, eventID, ok)
+}
+
+// ToggleMute flips event_id's is_active flag, writing only that column.
+func ToggleMute(ctx context.Context, db repo.DBTX, user *models.User, eventID int64) (*models.Event, error) {
 	events := repo.NewEventRepo(db, user.ID)
-	return events.Update(ctx, event)
+	ok, err := events.ToggleActive(ctx, eventID)
+	if err != nil {
+		return nil, err
+	}
+	return reloadAfterWrite(ctx, events, user, eventID, ok)
+}
+
+func reloadAfterWrite(ctx context.Context, events *repo.EventRepo, user *models.User, eventID int64, ok bool) (*models.Event, error) {
+	event, err := events.GetOwned(ctx, eventID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok || event == nil || event.DeletedAt != nil {
+		return nil, &NotFoundErr{Message: fmt.Sprintf("event %d not found for user %d", eventID, user.ID)}
+	}
+	return event, nil
 }
 
 func recomputeOccurrence(event *models.Event, user *models.User) error {

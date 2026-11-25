@@ -3,6 +3,8 @@ package repo
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -256,6 +258,76 @@ func (r *EventRepo) UpdateYear(ctx context.Context, id int64, oldYear, newYear *
 		 WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND year IS ?`,
 		newYear, formatDateTime(time.Now()), id, r.userID, oldYear,
 	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// updatableColumns are the columns UpdateColumns may write. Dates, year and
+// calendar columns are deliberately absent: they have their own paths.
+var updatableColumns = map[string]bool{
+	"category": true, "relation": true, "phone": true, "nickname": true,
+	"notes": true, "gender": true, "event_time": true, "event_type": true,
+	"photo_file_id": true, "is_active": true,
+}
+
+// UpdateColumns writes only the named columns (plus updated_at) of one live
+// event, leaving every other column as stored. Unknown columns are rejected.
+func (r *EventRepo) UpdateColumns(ctx context.Context, id int64, set map[string]any) (bool, error) {
+	if len(set) == 0 {
+		return false, nil
+	}
+	cols := make([]string, 0, len(set))
+	for c := range set {
+		if !updatableColumns[c] {
+			return false, fmt.Errorf("column %q is not updatable", c)
+		}
+		cols = append(cols, c)
+	}
+	sort.Strings(cols)
+	args := make([]any, 0, len(cols)+4)
+	parts := make([]string, 0, len(cols)+1)
+	for _, c := range cols {
+		parts = append(parts, c+" = ?")
+		args = append(args, set[c])
+	}
+	parts = append(parts, "updated_at = ?")
+	args = append(args, formatDateTime(time.Now()), id, r.userID)
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE events SET `+strings.Join(parts, ", ")+` WHERE id = ? AND user_id = ? AND deleted_at IS NULL`, args...)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// ToggleActive flips is_active in a single statement, so it cannot revert
+// anything else. It reports whether a live row was changed.
+func (r *EventRepo) ToggleActive(ctx context.Context, id int64) (bool, error) {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE events SET is_active = NOT is_active, updated_at = ?
+		 WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+		formatDateTime(time.Now()), id, r.userID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// UpdateOccurrences writes only next_occurrence and secondary_next_occurrence,
+// and only while both still hold the values the caller read. A date edited
+// meanwhile changes them, so the stale recomputation is dropped (false).
+func (r *EventRepo) UpdateOccurrences(ctx context.Context, id int64, oldNext, newNext, oldSecNext, newSecNext *time.Time) (bool, error) {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE events SET next_occurrence = ?, secondary_next_occurrence = ?, updated_at = ?
+		 WHERE id = ? AND user_id = ? AND deleted_at IS NULL
+		   AND next_occurrence IS ? AND secondary_next_occurrence IS ?`,
+		formatDatePtr(newNext), formatDatePtr(newSecNext), formatDateTime(time.Now()),
+		id, r.userID, formatDatePtr(oldNext), formatDatePtr(oldSecNext))
 	if err != nil {
 		return false, err
 	}

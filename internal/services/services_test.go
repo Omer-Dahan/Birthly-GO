@@ -631,3 +631,57 @@ func TestUpdateEventYear_KeepsConcurrentSecondaryDate(t *testing.T) {
 		t.Errorf("conflicting write changed year to %d", *again.Year)
 	}
 }
+
+func TestOwnColumnUpdates_KeepConcurrentYear(t *testing.T) {
+	ctx := context.Background()
+	for _, path := range []string{"field", "photo", "mute"} {
+		t.Run(path, func(t *testing.T) {
+			db := openTestDB(t)
+			user := mustUser(t, ctx, db, 7201)
+			y := 1990
+			ev, err := CreateMinimalEvent(ctx, db, user, NewEventInput{FirstName: "Dana", Month: 3, Day: 15, Year: &y}, 100)
+			if err != nil {
+				t.Fatalf("create: %v", err)
+			}
+			// The path read its snapshot here; the year is then changed.
+			snapshot, err := GetOwnedEvent(ctx, db, user, ev.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ny := 1991
+			if _, err := UpdateEventYear(ctx, db, user, ev.ID, snapshot.Year, &ny); err != nil {
+				t.Fatalf("year edit: %v", err)
+			}
+
+			var got *models.Event
+			switch path {
+			case "field":
+				got, err = UpdateEventColumns(ctx, db, user, ev.ID, map[string]any{"phone": "0501234567"})
+			case "photo":
+				got, err = UpdateEventColumns(ctx, db, user, ev.ID, map[string]any{"photo_file_id": "file-1"})
+			case "mute":
+				got, err = ToggleMute(ctx, db, user, ev.ID)
+			}
+			if err != nil {
+				t.Fatalf("%s update: %v", path, err)
+			}
+			if got.Year == nil || *got.Year != 1991 {
+				t.Errorf("year = %v, want 1991 (reverted by %s path)", got.Year, path)
+			}
+			switch path {
+			case "field":
+				if got.Phone == nil || *got.Phone != "0501234567" {
+					t.Errorf("phone not saved: %v", got.Phone)
+				}
+			case "photo":
+				if got.PhotoFileID == nil || *got.PhotoFileID != "file-1" {
+					t.Errorf("photo not saved: %v", got.PhotoFileID)
+				}
+			case "mute":
+				if got.IsActive {
+					t.Errorf("mute did not flip is_active")
+				}
+			}
+		})
+	}
+}

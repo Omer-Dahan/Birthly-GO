@@ -1151,3 +1151,38 @@ func TestTickReminders_LogsEventOccurrenceAdvanced(t *testing.T) {
 		t.Errorf("NextOccurrence after advance = %v, want something after %v (next year)", reloaded.NextOccurrence, cutoff)
 	}
 }
+
+func TestOccurrenceUpdate_KeepsConcurrentYearAndSecondaryDate(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	zero := 0
+	_, event := seedUserEventRule(t, db, 9301, "UTC", "09:00", &zero, nil, nil)
+	events := repo.NewEventRepo(db, 9301)
+
+	// The scheduler's snapshot, read before the concurrent edits.
+	snap, _ := events.GetOwned(ctx, event.ID)
+	oldOcc, oldSec := snap.NextOccurrence, snap.SecondaryNextOccurrence
+
+	ny := 1995
+	if ok, err := events.UpdateYear(ctx, event.ID, snap.Year, &ny); err != nil || !ok {
+		t.Fatalf("year edit: %v %v", ok, err)
+	}
+	newOcc := time.Date(2027, 8, 1, 0, 0, 0, 0, time.UTC)
+	ok, err := events.UpdateOccurrences(ctx, event.ID, oldOcc, &newOcc, oldSec, nil)
+	if err != nil || !ok {
+		t.Fatalf("UpdateOccurrences: %v %v", ok, err)
+	}
+	got, _ := events.GetOwned(ctx, event.ID)
+	if got.Year == nil || *got.Year != 1995 {
+		t.Errorf("year = %v, want 1995", got.Year)
+	}
+	if got.NextOccurrence == nil || !got.NextOccurrence.Equal(newOcc) {
+		t.Errorf("next_occurrence = %v, want %v", got.NextOccurrence, newOcc)
+	}
+
+	// A stale snapshot (the date moved meanwhile) must not be written.
+	other := time.Date(2028, 1, 1, 0, 0, 0, 0, time.UTC)
+	if ok, _ := events.UpdateOccurrences(ctx, event.ID, oldOcc, &other, oldSec, nil); ok {
+		t.Error("stale occurrence snapshot was written")
+	}
+}
