@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -33,13 +34,18 @@ func Backup(ctx context.Context, db *sql.DB, backupDir string, now time.Time, re
 		return "", err
 	}
 
+	// Refuse a bad marker path before creating any snapshot.
+	if err := checkMarkerPath(backupDir, dest+ownerMarkerSuffix); err != nil {
+		return "", err
+	}
+
 	escaped := strings.ReplaceAll(absDest, "'", "''")
 	if _, err := db.ExecContext(ctx, "VACUUM INTO '"+escaped+"'"); err != nil {
 		return "", fmt.Errorf("VACUUM INTO: %w", err)
 	}
 
 	// Mark the snapshot as this tool's own; pruning only ever touches marked files.
-	if err := os.WriteFile(dest+ownerMarkerSuffix, []byte("created by birthly backup\n"), 0o644); err != nil {
+	if err := writeMarker(backupDir, dest+ownerMarkerSuffix); err != nil {
 		return "", fmt.Errorf("writing backup marker: %w", err)
 	}
 
@@ -50,6 +56,44 @@ func Backup(ctx context.Context, db *sql.DB, backupDir string, now time.Time, re
 // ownerMarkerSuffix names the sidecar file that marks a snapshot as created
 // by Backup. A database file without its marker is never pruned.
 const ownerMarkerSuffix = ".birthly-backup"
+
+// checkMarkerPath refuses a marker that would land outside backupDir or that
+// already exists as anything other than a regular file (e.g. a symlink).
+func checkMarkerPath(backupDir, marker string) error {
+	if filepath.Clean(filepath.Dir(marker)) != filepath.Clean(backupDir) {
+		return fmt.Errorf("backup marker %q is outside backup dir", marker)
+	}
+	fi, err := os.Lstat(marker)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("backup marker %q is not a regular file", marker)
+	}
+	return nil
+}
+
+// writeMarker writes the marker without ever following a symlink.
+func writeMarker(backupDir, marker string) error {
+	if err := checkMarkerPath(backupDir, marker); err != nil {
+		return err
+	}
+	if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	f, err := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString("created by birthly backup\n"); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
 
 func pruneBackups(backupDir string, retention int, prefix string, protect []string) {
 	if retention <= 0 {

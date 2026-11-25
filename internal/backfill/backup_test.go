@@ -100,3 +100,24 @@ func countDB(entries []os.DirEntry) int {
 	}
 	return n
 }
+
+func TestBackup_MarkerSymlinkNotFollowed(t *testing.T) {
+	db := openTestDB(t)
+	backupDir := t.TempDir()
+	victim := filepath.Join(t.TempDir(), "victim.txt")
+	if err := os.WriteFile(victim, []byte("precious"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	marker := filepath.Join(backupDir, "birthly_backfill_20260101_120000.db"+ownerMarkerSuffix)
+	if err := os.Symlink(victim, marker); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if _, err := Backup(context.Background(), db, backupDir, now, 7, "birthly_backfill"); err == nil {
+		t.Fatal("Backup should refuse a symlink marker")
+	}
+	got, err := os.ReadFile(victim)
+	if err != nil || string(got) != "precious" {
+		t.Fatalf("symlink target modified: %q, %v", got, err)
+	}
+}
