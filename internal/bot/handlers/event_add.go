@@ -286,6 +286,10 @@ func msgAddHebrewYear(b *gotgbot.Bot, ctx *ext.Context) error {
 		_, sendErr := ctx.EffectiveMessage.Reply(b, yearErrorText(err, user), nil)
 		return sendErr
 	}
+	if currentHYear, _, _ := core.ToHebrew(timeNow()); year > currentHYear {
+		_, sendErr := ctx.EffectiveMessage.Reply(b, errBadYear.Error(), nil)
+		return sendErr
+	}
 
 	store.UpdateData(user.ID, map[string]any{"heb_year": year})
 	if greg, gErr := exactGregorianBirthDate(year, hebMonth, hebDay, user.AdarPolicy); gErr == nil {

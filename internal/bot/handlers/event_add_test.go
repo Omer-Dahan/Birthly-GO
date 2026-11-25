@@ -690,3 +690,66 @@ func TestFinalizeEvent_LogsEventCreated(t *testing.T) {
 		t.Errorf("rule_count = %v, want %v", got, want)
 	}
 }
+
+// sendCaptureClient records the text of every sendMessage call.
+type sendCaptureClient struct {
+	fakeEditClient
+	sent []string
+}
+
+func (c *sendCaptureClient) RequestWithContext(ctx context.Context, token, method string, params map[string]any, opts *gotgbot.RequestOpts) (json.RawMessage, error) {
+	if method == "sendMessage" {
+		if s, ok := params["text"].(string); ok {
+			c.sent = append(c.sent, s)
+		}
+	}
+	return c.fakeEditClient.RequestWithContext(ctx, token, method, params, opts)
+}
+
+// A Tishrei birthday typed with the year 2100 resolves to Hebrew 5861, past
+// the current year: the add flow must reject it like the edit flow does,
+// keep the state, and write nothing.
+func TestMsgAddHebrewYear_FutureYearRejected(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer db.Close()
+
+	user, err := services.GetOrCreateUser(ctx, db, 2100, nil, "Dana", nil, false)
+	if err != nil {
+		t.Fatalf("GetOrCreateUser: %v", err)
+	}
+	fsmStore := fsm.NewStore(time.Hour, 200)
+	fsmStore.SetState(user.ID, fsm.AddEventHebYear)
+	fsmStore.UpdateData(user.ID, map[string]any{"first_name": "Dana", "heb_month": 7, "heb_day": 1})
+
+	msg := &gotgbot.Message{Chat: gotgbot.Chat{Id: user.ID}, Text: "2100"}
+	gctx := &ext.Context{
+		Update:           &gotgbot.Update{Message: msg},
+		Data:             map[string]any{router.DataKeyUser: user, router.DataKeyDB: db, router.DataKeyFSM: fsmStore, router.DataKeyConfig: &config.Config{MaxEventsPerUser: 1000}},
+		EffectiveMessage: msg,
+		EffectiveUser:    &gotgbot.User{Id: user.ID},
+		EffectiveChat:    &gotgbot.Chat{Id: user.ID},
+	}
+	client := &sendCaptureClient{}
+	bot := &gotgbot.Bot{Token: "test-token", BotClient: client}
+
+	if err := msgAddHebrewYear(bot, gctx); err != nil {
+		t.Fatalf("msgAddHebrewYear: %v", err)
+	}
+	if len(client.sent) != 1 || client.sent[0] != errBadYear.Error() {
+		t.Errorf("sent = %q, want the edit flow's error %q", client.sent, errBadYear.Error())
+	}
+	if state, _ := fsmStore.GetState(user.ID); state != fsm.AddEventHebYear {
+		t.Errorf("state = %q, want AddEventHebYear", state)
+	}
+	if _, ok := fsmStore.GetData(user.ID)["heb_year"]; ok {
+		t.Error("heb_year was stored for a future year")
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("events rows = %d (err %v), want 0", n, err)
+	}
+}
