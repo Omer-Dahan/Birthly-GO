@@ -293,6 +293,32 @@ func ParseHebrewYearInput(raw string) (int, error) {
 	return 0, validationErrorf("❌ שנה לא תקינה.")
 }
 
+// ParseHebrewYearInputFor is ParseHebrewYearInput aware of the birthday's
+// Hebrew month and day. A typed Hebrew year is returned as is. A typed
+// Gregorian year is converted to the Hebrew year that contains that exact
+// civil date: +3760 for a birthday from Tevet to Elul (January to
+// September) and +3761 from Tishrei (after Rosh Hashana) to December.
+// Whichever of the two converts back into the typed Gregorian year wins; when
+// both do (a Tevet birthday near New Year) the older +3760 rule is kept.
+func ParseHebrewYearInputFor(raw string, hMonth, hDay int, adarPolicy string) (int, error) {
+	year, err := ParseHebrewYearInput(raw)
+	if err != nil {
+		return 0, err
+	}
+	cleaned := strings.TrimSpace(stripControlChars(raw))
+	greg, _ := strconv.Atoi(cleaned)
+	if greg < MinYearGregorian || greg > MaxYearGregorian || (greg >= MinYearHebrew && greg <= MaxYearHebrew) {
+		return year, nil
+	}
+	for _, h := range [2]int{greg + 3760, greg + 3761} {
+		d, err := ToGregorian(h, ResolveMonth(h, hMonth, adarPolicy), hDay)
+		if err == nil && d.Year() == greg {
+			return h, nil
+		}
+	}
+	return year, nil
+}
+
 // isAllASCIIDigits mirrors Python's str.isdigit() closely enough for this
 // input space (Telegram text entry): true if non-empty and every rune is
 // 0-9. (Python's isdigit() also accepts some superscript/other Unicode

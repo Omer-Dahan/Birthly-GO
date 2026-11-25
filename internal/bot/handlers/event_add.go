@@ -277,17 +277,17 @@ func msgAddHebrewYear(b *gotgbot.Bot, ctx *ext.Context) error {
 		return ext.ContinueGroups
 	}
 
-	year, err := core.ParseHebrewYearInput(ctx.EffectiveMessage.Text)
+	data := store.GetData(user.ID)
+	hebMonth, _ := data["heb_month"].(int)
+	hebDay, _ := data["heb_day"].(int)
+
+	year, err := core.ParseHebrewYearInputFor(ctx.EffectiveMessage.Text, hebMonth, hebDay, user.AdarPolicy)
 	if err != nil {
 		_, sendErr := ctx.EffectiveMessage.Reply(b, err.Error(), nil)
 		return sendErr
 	}
 
 	store.UpdateData(user.ID, map[string]any{"heb_year": year})
-
-	data := store.GetData(user.ID)
-	hebMonth, _ := data["heb_month"].(int)
-	hebDay, _ := data["heb_day"].(int)
 	if greg, gErr := exactGregorianBirthDate(year, hebMonth, hebDay, user.AdarPolicy); gErr == nil {
 		store.UpdateData(user.ID, map[string]any{
 			"auto_sec_month": int(greg.Month()),

@@ -185,7 +185,7 @@ func TestParseEditYear(t *testing.T) {
 		{"hebrew future", &testEvent{cal: core.CalendarTypeHebrew, m: 7, d: 10}, "5860", false},
 	}
 	for _, c := range cases {
-		_, err := parseEditYear(c.ev.model(), c.in, now)
+		_, err := parseEditYear(c.ev.model(), c.in, now, core.AdarPolicyAdarII)
 		if (err == nil) != c.ok {
 			t.Errorf("%s: err = %v, want ok=%v", c.name, err, c.ok)
 		}

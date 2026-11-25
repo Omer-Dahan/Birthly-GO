@@ -398,9 +398,9 @@ func setEventField(event *models.Event, field string, value *string) {
 // for a Gregorian event, a Hebrew year (Hebrew or Gregorian input accepted,
 // like the add flow) for a Hebrew event. Future years and a Feb 29 birthday
 // in a non-leap Gregorian year are rejected.
-func parseEditYear(event *models.Event, raw string, now time.Time) (int, error) {
+func parseEditYear(event *models.Event, raw string, now time.Time, adarPolicy string) (int, error) {
 	if event.CalendarType == core.CalendarTypeHebrew {
-		year, err := core.ParseHebrewYearInput(raw)
+		year, err := core.ParseHebrewYearInputFor(raw, event.Month, event.Day, adarPolicy)
 		if err != nil {
 			return 0, err
 		}
@@ -474,7 +474,7 @@ func msgFieldValue(b *gotgbot.Bot, ctx *ext.Context) error {
 			}
 			return err
 		}
-		year, err := parseEditYear(ev, raw, timeNow())
+		year, err := parseEditYear(ev, raw, timeNow(), user.AdarPolicy)
 		if err != nil {
 			_, sendErr := ctx.EffectiveMessage.Reply(b, err.Error(), nil)
 			return sendErr
