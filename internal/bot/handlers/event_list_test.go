@@ -8,6 +8,7 @@ import (
 	"birthly/internal/core"
 	"birthly/internal/services"
 	"birthly/internal/store"
+	"birthly/internal/store/models"
 )
 
 func TestRenderList_EmptyState(t *testing.T) {
@@ -84,5 +85,34 @@ func TestCbListSet_UpdatesSortAndFilter(t *testing.T) {
 	}
 	if !validFilterValues["muted"] {
 		t.Fatal("muted should be a recognized filter value")
+	}
+}
+
+func TestRenderList_NullOccurrenceRenders(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer db.Close()
+	user, err := services.GetOrCreateUser(ctx, db, 3011, nil, "U", nil, false)
+	if err != nil {
+		t.Fatalf("GetOrCreateUser: %v", err)
+	}
+	ev, err := services.CreateMinimalEvent(ctx, db, user, services.NewEventInput{FirstName: "Nulla", Month: 3, Day: 5}, 1000)
+	if err != nil {
+		t.Fatalf("CreateMinimalEvent: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE events SET next_occurrence = NULL WHERE id = ?`, ev.ID); err != nil {
+		t.Fatalf("null out occurrence: %v", err)
+	}
+	if _, _, err := renderList(ctx, db, user, 0, 10); err != nil {
+		t.Fatalf("renderList: %v", err)
+	}
+	if got := rowLabel(user, &models.Event{FirstName: "Nulla"}); got != "Nulla" {
+		t.Errorf("rowLabel = %q", got)
+	}
+	if got := shareText(user, &models.Event{FirstName: "Nulla"}); got != "🎂 Nulla" {
+		t.Errorf("shareText = %q", got)
 	}
 }

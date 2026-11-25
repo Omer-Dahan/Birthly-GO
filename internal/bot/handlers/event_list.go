@@ -43,6 +43,9 @@ func listActionFilter(action string) filters.CallbackQuery {
 func rowLabel(user *models.User, event *models.Event) string {
 	today := services.UserToday(user)
 	name := core.FormatName(event.FirstName, event.LastName)
+	if event.NextOccurrence == nil {
+		return name
+	}
 	countdown := core.FormatCountdown(core.DaysUntil(*event.NextOccurrence, today))
 
 	if age, ok := core.AgeAt(event.CalendarType, event.Year, *event.NextOccurrence); ok {

@@ -76,8 +76,8 @@ func hebrewEquivalentDate(event *models.Event, user *models.User, next, today ti
 }
 
 // RenderCardText renders the S8 event card body. Empty fields are omitted
-// entirely. event.NextOccurrence must be non-nil (guaranteed by callers that
-// only render cards for events with a computed occurrence).
+// entirely. A nil NextOccurrence is legal in the schema: the date, countdown
+// and age lines are left out and the rest of the card still renders.
 func RenderCardText(user *models.User, event *models.Event, rules []*models.ReminderRule) string {
 	lang := user.Language
 
@@ -90,8 +90,14 @@ func RenderCardText(user *models.User, event *models.Event, rules []*models.Remi
 	lines := []string{header, ""}
 
 	today := UserToday(user)
-	next := *event.NextOccurrence
+	var next time.Time
+	hasNext := event.NextOccurrence != nil
+	if hasNext {
+		next = *event.NextOccurrence
+	}
 	switch {
+	case !hasNext:
+		// no computed occurrence: nothing to show for the date
 	case event.CalendarType == core.CalendarTypeHebrew:
 		hebYear := 0
 		if event.Year != nil {
@@ -121,10 +127,12 @@ func RenderCardText(user *models.User, event *models.Event, rules []*models.Remi
 		})))
 	}
 
-	countdown := core.FormatCountdown(core.DaysUntil(next, today))
-	lines = append(lines, i18n.T("card.days_until", lang, genderKwargs(event.Gender, map[string]any{"countdown": countdown})))
+	if hasNext {
+		countdown := core.FormatCountdown(core.DaysUntil(next, today))
+		lines = append(lines, i18n.T("card.days_until", lang, genderKwargs(event.Gender, map[string]any{"countdown": countdown})))
+	}
 
-	if age, ok := core.AgeAt(event.CalendarType, event.Year, next); ok {
+	if age, ok := core.AgeAt(event.CalendarType, event.Year, next); hasNext && ok {
 		ageKey := "card.age"
 		if event.EventType == core.EventTypeMemorial {
 			ageKey = "card.age_memorial"

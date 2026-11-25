@@ -41,6 +41,9 @@ func eventCardActionFilter(action string) filters.CallbackQuery {
 func shareText(user *models.User, event *models.Event) string {
 	name := core.FormatName(event.FirstName, event.LastName)
 	today := services.UserToday(user)
+	if event.NextOccurrence == nil {
+		return "🎂 " + name
+	}
 	countdown := core.FormatCountdown(core.DaysUntil(*event.NextOccurrence, today))
 	dateStr := core.FormatDate(*event.NextOccurrence, user.DateFormat)
 	if age, ok := core.AgeAt(event.CalendarType, event.Year, *event.NextOccurrence); ok {

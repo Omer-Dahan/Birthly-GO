@@ -166,3 +166,18 @@ func TestRenderCardText_DualDateEventShowsRealStoredDates(t *testing.T) {
 		t.Errorf("expected exactly one countdown (⏳) on a dual-date card, got %d in:\n%s", n, text)
 	}
 }
+
+func TestRenderCardText_NullOccurrenceRenders(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	user := mustUser(t, ctx, db, 3010)
+	event, err := CreateMinimalEvent(ctx, db, user, NewEventInput{FirstName: "Nulla", Month: 3, Day: 5}, 1000)
+	if err != nil {
+		t.Fatalf("CreateMinimalEvent: %v", err)
+	}
+	event.NextOccurrence = nil
+	text := RenderCardText(user, event, nil)
+	if !strings.Contains(text, "Nulla") {
+		t.Errorf("card should still render the name, got:\n%s", text)
+	}
+}
