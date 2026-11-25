@@ -4,13 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -51,8 +51,14 @@ func Backup(ctx context.Context, db *sql.DB, backupDir string, now time.Time, re
 	createdMu.Unlock()
 
 	// The marker is documentation only; it never authorizes a delete.
-	if err := writeMarker(backupDir, dest+ownerMarkerSuffix); err != nil {
+	ours, err := writeMarker(backupDir, dest+ownerMarkerSuffix)
+	if err != nil {
 		return "", fmt.Errorf("writing backup marker: %w", err)
+	}
+	if !ours {
+		slog.Warn("backup marker path holds a file not written by this tool; left untouched, backups are not pruned",
+			"marker", dest+ownerMarkerSuffix)
+		return dest, nil
 	}
 
 	pruneBackups(backupDir, retention, prefix, protect)
@@ -87,23 +93,47 @@ func checkMarkerPath(backupDir, marker string) error {
 	return nil
 }
 
-// writeMarker writes the marker without ever following a symlink.
-func writeMarker(backupDir, marker string) error {
+const markerBody = "created by birthly backup\n"
+
+// writeMarker writes the marker atomically (temp file in the same directory,
+// then rename) and never deletes the target path. It reports whether the
+// marker is ours: false means a foreign file already sits at the path and was
+// left untouched.
+func writeMarker(backupDir, marker string) (bool, error) {
 	if err := checkMarkerPath(backupDir, marker); err != nil {
-		return err
+		return false, err
 	}
-	if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
-		return err
+	if existing, err := os.ReadFile(marker); err == nil {
+		if string(existing) != markerBody {
+			return false, nil
+		}
+	} else if !os.IsNotExist(err) {
+		return false, err
 	}
-	f, err := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o644)
+	tmp, err := os.CreateTemp(backupDir, ".birthly-marker-*")
 	if err != nil {
-		return err
+		return false, err
 	}
-	if _, err := f.WriteString("created by birthly backup\n"); err != nil {
-		f.Close()
-		return err
+	tmpName := tmp.Name()
+	if _, err := tmp.WriteString(markerBody); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return false, err
 	}
-	return f.Close()
+	if err := tmp.Chmod(0o644); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return false, err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return false, err
+	}
+	if err := os.Rename(tmpName, marker); err != nil {
+		os.Remove(tmpName)
+		return false, err
+	}
+	return true, nil
 }
 
 func pruneBackups(backupDir string, retention int, prefix string, protect []string) {

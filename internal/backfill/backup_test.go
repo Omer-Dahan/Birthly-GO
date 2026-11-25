@@ -1,9 +1,12 @@
 package backfill
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -150,5 +153,45 @@ func TestBackup_PruneIgnoresForeignDBAndStaleMarker(t *testing.T) {
 	entries, _ := os.ReadDir(backupDir)
 	if n := countDB(entries); n != 3 { // 2 retained + foreign
 		t.Errorf("got %d db files, want 3", n)
+	}
+}
+
+func TestBackup_ForeignMarkerSurvives(t *testing.T) {
+	db := openTestDB(t)
+	backupDir := t.TempDir()
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	marker := filepath.Join(backupDir, "birthly_backfill_20260101_120000.db"+ownerMarkerSuffix)
+	const content = "owner's own file\n"
+	if err := os.WriteFile(marker, []byte(content), 0o400); err != nil {
+		t.Fatal(err)
+	}
+
+	var logs bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(old)
+
+	path, err := Backup(context.Background(), db, backupDir, now, 1, "birthly_backfill")
+	if err != nil {
+		t.Fatalf("Backup: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("snapshot missing: %v", err)
+	}
+	got, err := os.ReadFile(marker)
+	if err != nil || string(got) != content {
+		t.Fatalf("foreign marker changed: %q, %v", got, err)
+	}
+	if fi, _ := os.Stat(marker); fi.Mode().Perm() != 0o400 {
+		t.Errorf("foreign marker mode changed: %v", fi.Mode())
+	}
+	if !strings.Contains(logs.String(), "not pruned") {
+		t.Errorf("situation not reported: %q", logs.String())
+	}
+	entries, _ := os.ReadDir(backupDir)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".birthly-marker-") {
+			t.Errorf("temp file left behind: %s", e.Name())
+		}
 	}
 }
