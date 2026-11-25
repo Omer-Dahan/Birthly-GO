@@ -124,24 +124,61 @@ func PlanHebrewYearRepair(ctx context.Context, db *sql.DB) (YearRepairReport, er
 	return rep, rows.Err()
 }
 
-// ApplyHebrewYearRepair writes every fix in a single transaction. The WHERE
-// clause re-checks the old year so a concurrent edit is never overwritten.
-func ApplyHebrewYearRepair(ctx context.Context, db *sql.DB, fixes []YearFix) error {
+// ApplyResult reports what ApplyHebrewYearRepair did.
+type ApplyResult struct {
+	Applied int
+	// Skipped lists events that were no longer provable (changed, deleted or
+	// gone) when re-checked inside the transaction.
+	Skipped []int64
+}
+
+// ApplyHebrewYearRepair writes the fixes in a single transaction. Every row is
+// re-read and re-classified inside that transaction; a row that was deleted,
+// edited, or is no longer provably one year short is skipped, never written.
+func ApplyHebrewYearRepair(ctx context.Context, db *sql.DB, fixes []YearFix) (ApplyResult, error) {
+	var res ApplyResult
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return res, err
 	}
 	defer tx.Rollback()
 	now := time.Now().UTC().Format(datetimeLayout)
 	for _, f := range fixes {
-		res, err := tx.ExecContext(ctx, `UPDATE events SET year = ?, updated_at = ? WHERE id = ? AND year = ? AND calendar_type = 'hebrew'`,
-			f.AfterYear, now, f.EventID, f.BeforeYear)
+		var (
+			year, month, day int
+			secType          sql.NullString
+			secMonth, secDay sql.NullInt64
+			adarPolicy       string
+		)
+		err := tx.QueryRowContext(ctx, `
+SELECT e.year, e.month, e.day, e.secondary_calendar_type, e.secondary_month, e.secondary_day, u.adar_policy
+FROM events e JOIN users u ON u.id = e.user_id
+WHERE e.id = ? AND e.deleted_at IS NULL AND e.event_type = 'birthday'
+  AND e.calendar_type = 'hebrew' AND e.year IS NOT NULL`, f.EventID).
+			Scan(&year, &month, &day, &secType, &secMonth, &secDay, &adarPolicy)
+		if err == sql.ErrNoRows {
+			res.Skipped = append(res.Skipped, f.EventID)
+			continue
+		}
 		if err != nil {
-			return fmt.Errorf("event %d: %w", f.EventID, err)
+			return res, fmt.Errorf("event %d: %w", f.EventID, err)
 		}
-		if n, _ := res.RowsAffected(); n != 1 {
-			return fmt.Errorf("event %d changed while repairing", f.EventID)
+		if year != f.BeforeYear || classifyHebrewYear(year, month, day, secType, secMonth, secDay, adarPolicy) != ClassProvable {
+			res.Skipped = append(res.Skipped, f.EventID)
+			continue
 		}
+		r, err := tx.ExecContext(ctx, `UPDATE events SET year = ?, updated_at = ? WHERE id = ? AND year = ? AND calendar_type = 'hebrew'`,
+			year+1, now, f.EventID, year)
+		if err != nil {
+			return res, fmt.Errorf("event %d: %w", f.EventID, err)
+		}
+		if n, _ := r.RowsAffected(); n != 1 {
+			return res, fmt.Errorf("event %d changed while repairing", f.EventID)
+		}
+		res.Applied++
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return ApplyResult{}, err
+	}
+	return res, nil
 }

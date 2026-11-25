@@ -41,8 +41,8 @@ func TestHebrewYearRepair(t *testing.T) {
 	if rep.Provable != 1 || rep.Consistent != 1 || rep.Ambiguous != 2 || rep.NoSecondary != 1 {
 		t.Fatalf("report = %+v", rep)
 	}
-	if err := ApplyHebrewYearRepair(ctx, db, rep.Fixes); err != nil {
-		t.Fatal(err)
+	if res, err := ApplyHebrewYearRepair(ctx, db, rep.Fixes); err != nil || res.Applied != 1 || len(res.Skipped) != 0 {
+		t.Fatalf("apply = %+v, %v", res, err)
 	}
 	year := func(id int64) int {
 		e, err := repo.NewEventRepo(db, uid).GetOwned(ctx, id)
@@ -60,4 +60,7 @@ func TestHebrewYearRepair(t *testing.T) {
 	if len(again.Fixes) != 0 || again.Consistent != 2 {
 		t.Errorf("not idempotent: %+v", again)
 	}
+}
+
+func TestApplySkipsRowChangedSinceplanning(t *testing.T) {
 }

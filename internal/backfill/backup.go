@@ -19,8 +19,9 @@ import (
 // "birthly_manual" for operator-triggered snapshots) so the two retention
 // pools never prune each other's backups. VACUUM INTO is safe to run against
 // a live database under WAL, unlike a raw file copy. Returns the created
-// snapshot's path.
-func Backup(ctx context.Context, db *sql.DB, backupDir string, now time.Time, retention int, prefix string) (string, error) {
+// snapshot's path. Files named in protect (e.g. the live database) are never
+// pruned, even if they match the backup name pattern.
+func Backup(ctx context.Context, db *sql.DB, backupDir string, now time.Time, retention int, prefix string, protect ...string) (string, error) {
 	if err := os.MkdirAll(backupDir, 0o755); err != nil {
 		return "", fmt.Errorf("creating backup dir: %w", err)
 	}
@@ -37,11 +38,11 @@ func Backup(ctx context.Context, db *sql.DB, backupDir string, now time.Time, re
 		return "", fmt.Errorf("VACUUM INTO: %w", err)
 	}
 
-	pruneBackups(backupDir, retention, prefix)
+	pruneBackups(backupDir, retention, prefix, protect)
 	return dest, nil
 }
 
-func pruneBackups(backupDir string, retention int, prefix string) {
+func pruneBackups(backupDir string, retention int, prefix string, protect []string) {
 	if retention <= 0 {
 		return
 	}
@@ -61,7 +62,26 @@ func pruneBackups(backupDir string, retention int, prefix string) {
 	if len(names) <= retention {
 		return
 	}
+	var guarded []os.FileInfo
+	for _, p := range protect {
+		if fi, err := os.Stat(p); err == nil {
+			guarded = append(guarded, fi)
+		}
+	}
 	for _, name := range names[:len(names)-retention] {
-		os.Remove(filepath.Join(backupDir, name))
+		path := filepath.Join(backupDir, name)
+		if fi, err := os.Stat(path); err == nil {
+			skip := false
+			for _, g := range guarded {
+				if os.SameFile(fi, g) {
+					skip = true
+					break
+				}
+			}
+			if skip {
+				continue
+			}
+		}
+		os.Remove(path)
 	}
 }

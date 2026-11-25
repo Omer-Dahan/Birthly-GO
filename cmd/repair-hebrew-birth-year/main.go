@@ -9,6 +9,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"birthly/internal/backfill"
@@ -29,6 +31,7 @@ func run(args []string) error {
 	dbPath := fs.String("db-path", "data/birthly.db", "path to the SQLite database")
 	apply := fs.Bool("apply", false, "write the repairs (default is dry-run)")
 	backupDir := fs.String("backup-dir", "data/backups", "directory for the pre-apply backup snapshot")
+	confirm := fs.Int("confirm-count", -1, "with --apply: the number of events the dry-run reported (must match the plan exactly)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -39,6 +42,12 @@ func run(args []string) error {
 		return fmt.Errorf("database %s does not exist or is unreadable (refusing to create one): %w", *dbPath, err)
 	} else if st.IsDir() {
 		return fmt.Errorf("database path %s is a directory", *dbPath)
+	}
+
+	if *apply {
+		if err := checkBackupDir(*dbPath, *backupDir); err != nil {
+			return err
+		}
 	}
 
 	db, err := store.OpenExisting(*dbPath)
@@ -72,14 +81,56 @@ func run(args []string) error {
 		return nil
 	}
 
-	backupPath, err := backfill.Backup(ctx, db, *backupDir, time.Now(), backupRetention, "birthly_hebyear")
+	if *confirm != len(rep.Fixes) {
+		return fmt.Errorf("--apply needs --confirm-count %d (the number of events in the plan above); got %d, nothing written", len(rep.Fixes), *confirm)
+	}
+
+	backupPath, err := backfill.Backup(ctx, db, *backupDir, time.Now(), backupRetention, "birthly_hebyear", *dbPath)
 	if err != nil {
 		return fmt.Errorf("backup before apply (aborting, nothing written): %w", err)
 	}
 	fmt.Printf("\nbackup written to %s\n", backupPath)
-	if err := backfill.ApplyHebrewYearRepair(ctx, db, rep.Fixes); err != nil {
+	res, err := backfill.ApplyHebrewYearRepair(ctx, db, rep.Fixes)
+	if err != nil {
 		return fmt.Errorf("applying repair (transaction rolled back, nothing written): %w", err)
 	}
-	fmt.Printf("applied %d event(s)\n", len(rep.Fixes))
+	fmt.Printf("applied %d event(s), skipped %d no longer provable %v\n", res.Applied, len(res.Skipped), res.Skipped)
+	return nil
+}
+
+// checkBackupDir refuses a backup directory that is, or sits inside, the
+// directory holding the database, so the input can never be pruned or
+// overwritten by backup rotation.
+func checkBackupDir(dbPath, backupDir string) error {
+	absDB, err := filepath.Abs(dbPath)
+	if err != nil {
+		return err
+	}
+	if real, err := filepath.EvalSymlinks(absDB); err == nil {
+		absDB = real
+	}
+	absBk, err := filepath.Abs(backupDir)
+	if err != nil {
+		return err
+	}
+	// Resolve the deepest existing ancestor so a not-yet-created dir is judged by where it will land.
+	rest := ""
+	probe := absBk
+	for {
+		if real, err := filepath.EvalSymlinks(probe); err == nil {
+			absBk = filepath.Join(real, rest)
+			break
+		}
+		parent := filepath.Dir(probe)
+		if parent == probe {
+			break
+		}
+		rest = filepath.Join(filepath.Base(probe), rest)
+		probe = parent
+	}
+	rel, err := filepath.Rel(absBk, absDB)
+	if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("backup dir %s contains the database %s; choose a different --backup-dir", backupDir, dbPath)
+	}
 	return nil
 }

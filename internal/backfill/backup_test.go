@@ -69,3 +69,23 @@ func TestBackup_DistinctPrefixesHaveIndependentRetention(t *testing.T) {
 		t.Errorf("backup dir has %d files, want 2 (one survivor per prefix)", len(entries))
 	}
 }
+
+func TestBackup_NeverPrunesProtectedFile(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	dir := t.TempDir()
+	// A file that matches the backup pattern and sorts oldest.
+	input := filepath.Join(dir, "birthly_hebyear_20000101_000000.db")
+	if err := os.WriteFile(input, []byte("input"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 4; i++ {
+		if _, err := Backup(ctx, db, dir, base.Add(time.Duration(i)*time.Minute), 2, "birthly_hebyear", input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(input); err != nil {
+		t.Fatalf("protected input was pruned: %v", err)
+	}
+}
