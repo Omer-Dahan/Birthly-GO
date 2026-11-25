@@ -53,14 +53,26 @@ func addTextStale(data map[string]any, msg *gotgbot.Message) bool {
 		return false
 	}
 	promptMsg, _ := data[addPromptKey].(int64)
+	if promptMsg == 0 {
+		return false
+	}
 	return promptMsg != msg.ReplyToMessage.MessageId
+}
+
+// callbackMessageID returns the id of the message a button sits on, or 0
+// when Telegram delivered the callback without one.
+func callbackMessageID(cq *gotgbot.CallbackQuery) int64 {
+	if cq == nil || cq.Message == nil {
+		return 0
+	}
+	return cq.Message.GetMessageId()
 }
 
 // addCallbackStale reports whether a button press comes from a message other
 // than the add prompt now open, and tells the user to restart when it does.
 func addCallbackStale(b *gotgbot.Bot, ctx *ext.Context, user *models.User, store *fsm.Store) bool {
 	promptMsg, _ := store.GetData(user.ID)[addPromptKey].(int64)
-	if promptMsg == 0 || ctx.CallbackQuery.Message.GetMessageId() == promptMsg {
+	if promptMsg == 0 || callbackMessageID(ctx.CallbackQuery) == 0 || callbackMessageID(ctx.CallbackQuery) == promptMsg {
 		return false
 	}
 	AnswerCallback(b, ctx.CallbackQuery, i18n.T("add.stale_prompt", user.Language, nil))
@@ -101,7 +113,9 @@ func cbMenuAdd(b *gotgbot.Bot, ctx *ext.Context) error {
 	// A new add starts from nothing: drop every value the previous flow left.
 	store.Clear(user.ID)
 	store.SetState(user.ID, fsm.AddEventName)
-	store.UpdateData(user.ID, map[string]any{addPromptKey: ctx.CallbackQuery.Message.GetMessageId()})
+	if id := callbackMessageID(ctx.CallbackQuery); id != 0 {
+		store.UpdateData(user.ID, map[string]any{addPromptKey: id})
+	}
 
 	text := i18n.T("add.name.title", user.Language, nil) + "\n<i>" + i18n.T("add.name.hint", user.Language, nil) + "</i>"
 	if err := EditOrIgnore(b, ctx.CallbackQuery, text, keyboards.NameStepKeyboard(user.Language)); err != nil {

@@ -922,3 +922,33 @@ func TestAddFlow_ReplyToAbandonedDatePromptRefused(t *testing.T) {
 		t.Fatalf("events = %v, want only Bet", evs)
 	}
 }
+
+// A callback Telegram delivers without a message must not panic the prompt
+// checks; the button behaves as it did before they existed.
+func TestCallbackWithoutMessageDoesNotPanic(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer db.Close()
+	user, err := services.GetOrCreateUser(context.Background(), db, 2002, nil, "Noa", nil, false)
+	if err != nil {
+		t.Fatalf("GetOrCreateUser: %v", err)
+	}
+	fsmStore := fsm.NewStore(time.Hour, 200)
+	gctx, cq := newAddFlowCallbackContext(user, db, fsmStore)
+	cq.Message = nil
+	bot := testEditBot(&fakeEditClient{})
+
+	if id := callbackMessageID(cq); id != 0 {
+		t.Fatalf("callbackMessageID = %d, want 0", id)
+	}
+	fsmStore.UpdateData(user.ID, map[string]any{addPromptKey: int64(7)})
+	if addCallbackStale(bot, gctx, user, fsmStore) {
+		t.Fatal("a callback without a message was judged stale")
+	}
+	_ = cbMenuAdd(bot, gctx)
+	if st, _ := fsmStore.GetState(user.ID); st != fsm.AddEventName {
+		t.Fatalf("state = %q, want the name step", st)
+	}
+}

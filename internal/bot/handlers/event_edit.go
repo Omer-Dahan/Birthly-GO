@@ -211,7 +211,8 @@ func cbFieldPick(b *gotgbot.Bot, ctx *ext.Context) error {
 		return err
 	}
 
-	store.UpdateData(user.ID, map[string]any{"editing_field": field, "prompt_event_id": eventID, "prompt_message_id": ctx.CallbackQuery.Message.GetMessageId()})
+	// 0 when the callback carried no message: the reply check then lets any reply through.
+	store.UpdateData(user.ID, map[string]any{"editing_field": field, "prompt_event_id": eventID, "prompt_message_id": callbackMessageID(ctx.CallbackQuery)})
 	if field == "year" {
 		// The year the user is looking at; the write only lands if it is
 		// still the stored year.
@@ -567,7 +568,10 @@ func promptMatchesEvent(data map[string]any, eventID int64, msg *gotgbot.Message
 	}
 	if msg != nil && msg.ReplyToMessage != nil {
 		promptMsg, _ := data["prompt_message_id"].(int64)
-		return promptMsg != 0 && msg.ReplyToMessage.MessageId == promptMsg
+		if promptMsg == 0 {
+			return true
+		}
+		return msg.ReplyToMessage.MessageId == promptMsg
 	}
 	return true
 }
