@@ -12,7 +12,7 @@ import (
 
 // MoreDetailsFields are the S6 "more details" fields, in display order
 // (SPEC.md 15/S6).
-var MoreDetailsFields = []string{"category", "relation", "phone", "nickname", "photo", "notes", "gender", "event_time"}
+var MoreDetailsFields = []string{"category", "relation", "phone", "nickname", "photo", "notes", "gender", "event_time", "year"}
 
 func flowBtn(text, action string) gotgbot.InlineKeyboardButton {
 	return gotgbot.InlineKeyboardButton{Text: text, CallbackData: callbacks.EventFlow{Action: action}.Encode()}
@@ -145,6 +145,9 @@ func CardKeyboard(lang string, eventID int64, isActive bool, shareText string) *
 type EventFieldValues struct {
 	Category, Relation, Phone, Nickname, Notes, Gender, EventTime, EventType *string
 	HasPhoto                                                                 bool
+	// Year is the birth year in the event's own calendar (Gregorian or
+	// Hebrew); nil when unknown.
+	Year *int
 }
 
 func fieldDisplayValue(lang, field string, ev EventFieldValues) string {
@@ -166,6 +169,11 @@ func fieldDisplayValue(lang, field string, ev EventFieldValues) string {
 		raw = ev.EventTime
 	case "event_type":
 		raw = ev.EventType
+	case "year":
+		if ev.Year == nil {
+			return "-"
+		}
+		return strconv.Itoa(*ev.Year)
 	case "photo":
 		if ev.HasPhoto {
 			return i18n.T("common.saved", lang, nil)

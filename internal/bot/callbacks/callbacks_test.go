@@ -152,3 +152,19 @@ func TestDecodeWrongPrefixErrors(t *testing.T) {
 		t.Error("DecodeMenu on a nav: payload should error")
 	}
 }
+
+// The birth-year edit reuses the registered "field" and "clear" flow actions
+// with the value "year"; both must survive an Encode/Decode round trip.
+func TestEventFlowYearActionsRoundTrip(t *testing.T) {
+	year := "year"
+	for _, action := range []string{"field", "clear"} {
+		data := EventFlow{Action: action, Value: &year}.Encode()
+		decoded, err := DecodeEvent(data)
+		if err != nil {
+			t.Fatalf("DecodeEvent(%q): %v", data, err)
+		}
+		if decoded.Flow == nil || decoded.Flow.Action != action || decoded.Flow.Value == nil || *decoded.Flow.Value != "year" {
+			t.Errorf("round trip of %q = %+v", data, decoded.Flow)
+		}
+	}
+}

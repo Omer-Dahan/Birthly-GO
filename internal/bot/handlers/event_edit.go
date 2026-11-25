@@ -2,10 +2,12 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
@@ -45,6 +47,7 @@ var fieldPromptKeys = map[string]string{
 	"phone":      "edit.phone_prompt",
 	"event_time": "edit.time_prompt",
 	"photo":      "edit.photo_prompt",
+	"year":       "edit.year_prompt",
 }
 
 func eventFieldValues(event *models.Event) keyboards.EventFieldValues {
@@ -53,6 +56,7 @@ func eventFieldValues(event *models.Event) keyboards.EventFieldValues {
 		Nickname: event.Nickname, Notes: event.Notes, Gender: event.Gender,
 		EventTime: event.EventTime, EventType: &event.EventType,
 		HasPhoto: event.PhotoFileID != nil && *event.PhotoFileID != "",
+		Year:     event.Year,
 	}
 }
 
@@ -249,6 +253,8 @@ func fieldHasValue(db repo.DBTX, user *models.User, eventID int64, field string)
 		return v.EventTime != nil && *v.EventTime != ""
 	case "photo":
 		return v.HasPhoto
+	case "year":
+		return v.Year != nil
 	case "relation":
 		return v.Relation != nil && *v.Relation != ""
 	case "nickname":
@@ -377,7 +383,67 @@ func setEventField(event *models.Event, field string, value *string) {
 		}
 	case "photo":
 		event.PhotoFileID = value
+	case "year":
+		// Callers validate the number first; an unparsable value is ignored
+		// rather than silently clearing the year.
+		if value == nil {
+			event.Year = nil
+		} else if y, err := strconv.Atoi(*value); err == nil {
+			event.Year = &y
+		}
 	}
+}
+
+// parseEditYear validates a typed birth year for event: a Gregorian year
+// for a Gregorian event, a Hebrew year (Hebrew or Gregorian input accepted,
+// like the add flow) for a Hebrew event. Future years and a Feb 29 birthday
+// in a non-leap Gregorian year are rejected.
+func parseEditYear(event *models.Event, raw string, now time.Time) (int, error) {
+	if event.CalendarType == core.CalendarTypeHebrew {
+		year, err := core.ParseHebrewYearInput(raw)
+		if err != nil {
+			return 0, err
+		}
+		if currentHYear, _, _ := core.ToHebrew(now); year > currentHYear {
+			return 0, errBadYear
+		}
+		return year, nil
+	}
+	cleaned := strings.TrimSpace(raw)
+	year, err := strconv.Atoi(cleaned)
+	if err != nil || strconv.Itoa(year) != cleaned {
+		return 0, errBadYear
+	}
+	if _, err := core.ValidateYear(year, false); err != nil {
+		return 0, err
+	}
+	if year > now.Year() {
+		return 0, errBadYear
+	}
+	if event.Month == 2 && event.Day == 29 && time.Date(year, 2, 29, 0, 0, 0, 0, time.UTC).Month() != time.February {
+		return 0, errBadYear
+	}
+	return year, nil
+}
+
+var errBadYear = errors.New("❌ שנה לא תקינה.")
+
+// refreshSecondaryDate keeps a dual-date event's Gregorian secondary date in
+// step with a changed Hebrew birth year: it is recomputed from the new year
+// (the same exact-birth-date rule the add flow offers for confirmation).
+// A no-op for events without a secondary date, for Gregorian events, or when
+// the year was cleared.
+func refreshSecondaryDate(event *models.Event, user *models.User) {
+	if event.CalendarType != core.CalendarTypeHebrew || event.Year == nil ||
+		event.SecondaryMonth == nil || event.SecondaryDay == nil {
+		return
+	}
+	greg, err := exactGregorianBirthDate(*event.Year, event.Month, event.Day, user.AdarPolicy)
+	if err != nil {
+		return
+	}
+	m, d := int(greg.Month()), greg.Day()
+	event.SecondaryMonth, event.SecondaryDay = &m, &d
 }
 
 func msgFieldValue(b *gotgbot.Bot, ctx *ext.Context) error {
@@ -398,7 +464,23 @@ func msgFieldValue(b *gotgbot.Bot, ctx *ext.Context) error {
 	raw := ctx.EffectiveMessage.Text
 	var value string
 
-	if field == "event_time" {
+	if field == "year" {
+		// Parsed against the event's calendar, so load it first.
+		ev, err := services.GetOwnedEvent(context.Background(), db, user, eventID)
+		if err != nil {
+			if isNotFound(err) {
+				_, sendErr := ctx.EffectiveMessage.Reply(b, i18n.T("error.not_found", user.Language, nil), nil)
+				return sendErr
+			}
+			return err
+		}
+		year, err := parseEditYear(ev, raw, timeNow())
+		if err != nil {
+			_, sendErr := ctx.EffectiveMessage.Reply(b, err.Error(), nil)
+			return sendErr
+		}
+		value = strconv.Itoa(year)
+	} else if field == "event_time" {
 		m := timeRE.FindStringSubmatch(strings.TrimSpace(raw))
 		if m == nil {
 			_, err := ctx.EffectiveMessage.Reply(b, i18n.T("edit.time_error", user.Language, nil), nil)
@@ -435,6 +517,9 @@ func msgFieldValue(b *gotgbot.Bot, ctx *ext.Context) error {
 		return err
 	}
 	setEventField(event, field, &value)
+	if field == "year" {
+		refreshSecondaryDate(event, user)
+	}
 	updated, err := services.UpdateEvent(context.Background(), db, user, event)
 	if err != nil {
 		if isNotFound(err) {
