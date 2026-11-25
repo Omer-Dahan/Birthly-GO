@@ -156,7 +156,8 @@ type ApplyResult struct {
 // ApplyHebrewYearRepair writes the given fixes (the owner-named, previously
 // reported candidates) in a single transaction. Every row is re-read inside
 // that transaction and must still be exactly as reported (year, Hebrew and
-// Gregorian dates, untouched since creation) and still provable; anything else,
+// Gregorian dates) and still provable; updated_at is not consulted, since the
+// scheduler also bumps it; anything else,
 // including a non-writable candidate, is skipped, never written.
 func ApplyHebrewYearRepair(ctx context.Context, db *sql.DB, fixes []YearFix) (ApplyResult, error) {
 	var res ApplyResult
@@ -176,15 +177,13 @@ func ApplyHebrewYearRepair(ctx context.Context, db *sql.DB, fixes []YearFix) (Ap
 			secType          sql.NullString
 			secMonth, secDay sql.NullInt64
 			adarPolicy       string
-			untouched        bool
 		)
 		err := tx.QueryRowContext(ctx, `
-SELECT e.year, e.month, e.day, e.secondary_calendar_type, e.secondary_month, e.secondary_day, u.adar_policy,
-       (CAST(e.created_at AS TEXT) = CAST(e.updated_at AS TEXT))
+SELECT e.year, e.month, e.day, e.secondary_calendar_type, e.secondary_month, e.secondary_day, u.adar_policy
 FROM events e JOIN users u ON u.id = e.user_id
 WHERE e.id = ? AND e.deleted_at IS NULL AND e.event_type = 'birthday'
   AND e.calendar_type = 'hebrew' AND e.year IS NOT NULL`, f.EventID).
-			Scan(&year, &month, &day, &secType, &secMonth, &secDay, &adarPolicy, &untouched)
+			Scan(&year, &month, &day, &secType, &secMonth, &secDay, &adarPolicy)
 		if err == sql.ErrNoRows {
 			res.Skipped = append(res.Skipped, f.EventID)
 			continue
@@ -194,7 +193,7 @@ WHERE e.id = ? AND e.deleted_at IS NULL AND e.event_type = 'birthday'
 		}
 		asReported := year == f.BeforeYear && month == f.HebMonth && day == f.HebDay &&
 			secMonth.Valid && secDay.Valid && int(secMonth.Int64) == f.SecMonth && int(secDay.Int64) == f.SecDay
-		if !asReported || !untouched || classifyHebrewYear(year, month, day, secType, secMonth, secDay, adarPolicy) != ClassProvable {
+		if !asReported || classifyHebrewYear(year, month, day, secType, secMonth, secDay, adarPolicy) != ClassProvable {
 			res.Skipped = append(res.Skipped, f.EventID)
 			continue
 		}

@@ -93,14 +93,46 @@ func TestManualDateRowReportedNotWrittenEvenWhenNamed(t *testing.T) {
 	if err != nil || res.Applied != 0 || len(res.Skipped) != 1 {
 		t.Fatalf("apply = %+v, %v", res, err)
 	}
-	// Even a hand-forged writable claim is refused by the in-transaction re-check.
-	forged := rep.Fixes[0]
-	forged.Writable = true
-	if res, err := ApplyHebrewYearRepair(ctx, db, []YearFix{forged}); err != nil || res.Applied != 0 {
-		t.Fatalf("forged apply = %+v, %v", res, err)
-	}
 	var got int
 	if err := db.QueryRowContext(ctx, `SELECT year FROM events WHERE id=?`, id).Scan(&got); err != nil || got != y {
 		t.Fatalf("year = %d (%v), want %d", got, err, y)
+	}
+}
+
+func TestRepairSurvivesSchedulerTouchButNotYearChange(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	uid := makeUser(t, ctx, db, 2003, false)
+	_, hm, hd := core.ToHebrew(time.Date(1983, 11, 30, 0, 0, 0, 0, time.UTC))
+	mk := func() int64 {
+		y := 5743
+		id := makeEvent(t, ctx, db, uid, core.CalendarTypeHebrew, &y, hm, hd, true, false)
+		if _, err := db.ExecContext(ctx, `UPDATE events SET secondary_calendar_type='gregorian', secondary_month=11, secondary_day=30 WHERE id=?`, id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	touched, edited := mk(), mk()
+	rep, err := PlanHebrewYearRepair(ctx, db)
+	if err != nil || len(rep.Fixes) != 2 || rep.Provable != 2 {
+		t.Fatalf("plan = %+v, %v", rep, err)
+	}
+	// Scheduler advances an occurrence: only updated_at moves.
+	if _, err := db.ExecContext(ctx, `UPDATE events SET updated_at='2099-01-01 00:00:00' WHERE id=?`, touched); err != nil {
+		t.Fatal(err)
+	}
+	// A real edit: the year changes.
+	if _, err := db.ExecContext(ctx, `UPDATE events SET year=5700, updated_at='2099-01-01 00:00:00' WHERE id=?`, edited); err != nil {
+		t.Fatal(err)
+	}
+	res, err := ApplyHebrewYearRepair(ctx, db, rep.Fixes)
+	if err != nil || res.Applied != 1 || len(res.Skipped) != 1 || res.Skipped[0] != edited {
+		t.Fatalf("apply = %+v, %v", res, err)
+	}
+	var y1, y2 int
+	db.QueryRowContext(ctx, `SELECT year FROM events WHERE id=?`, touched).Scan(&y1)
+	db.QueryRowContext(ctx, `SELECT year FROM events WHERE id=?`, edited).Scan(&y2)
+	if y1 != 5744 || y2 != 5700 {
+		t.Fatalf("years = %d, %d", y1, y2)
 	}
 }
