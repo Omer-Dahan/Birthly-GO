@@ -129,13 +129,14 @@ func TestEditFlow_HebrewYearKeepsStoredGregorianDate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 5750 / 10 Tishrei fell on 1989-10-09; store a deliberately different
-	// month/day (the user's own recorded date) as the anchor.
-	src, err := exactGregorianBirthDate(5750, 7, 10, user.AdarPolicy)
-	if err != nil {
-		t.Fatal(err)
+	// 10 Tishrei 5750 fell on 1989-10-09. Store a Gregorian anchor of 25 Dec,
+	// which no recomputation from the new year can produce, so any code that
+	// rewrites the stored date from the year is caught.
+	sm, sd := 12, 25
+	if src, err := exactGregorianBirthDate(5750, 7, 10, user.AdarPolicy); err != nil ||
+		(int(src.Month()) == sm && src.Day() == sd) {
+		t.Fatalf("fixture must differ from the recomputed date, got %v (%v)", src, err)
 	}
-	sm, sd := int(src.Month()), src.Day()
 	for _, tc := range []struct {
 		name, input string
 		wantYear    int
@@ -165,10 +166,6 @@ func TestEditFlow_HebrewYearKeepsStoredGregorianDate(t *testing.T) {
 			if got.SecondaryMonth == nil || got.SecondaryDay == nil ||
 				*got.SecondaryMonth != sm || *got.SecondaryDay != sd {
 				t.Errorf("secondary = %v/%v, want %d/%d untouched", got.SecondaryDay, got.SecondaryMonth, sd, sm)
-			}
-			if d, err := exactGregorianBirthDate(*got.Year, 7, 10, user.AdarPolicy); err != nil ||
-				int(d.Month()) != sm || d.Day() != sd {
-				t.Errorf("source date moved: year %d resolves to %v, stored %d/%d", *got.Year, d, sd, sm)
 			}
 		})
 	}
