@@ -370,3 +370,79 @@ func TestEditFlow_TextReplyForOldPromptRefusedOnOtherEvent(t *testing.T) {
 		t.Fatal("user did not get the refusal")
 	}
 }
+
+// replyCtx is a text reply that answers the message with id replyTo.
+func replyCtx(t *testing.T, db repo.DBTX, userID int64, fsmStore *fsm.Store, text string, replyTo int64, user *models.User) *ext.Context {
+	t.Helper()
+	g := editYearCtx(t, db, userID, fsmStore, "", text, user)
+	g.EffectiveMessage.ReplyToMessage = &gotgbot.Message{MessageId: replyTo, Chat: gotgbot.Chat{Id: 555}}
+	return g
+}
+
+func TestEditFlow_ReplyToFirstPromptDoesNotLandOnSecondEvent(t *testing.T) {
+	if err := i18n.LoadLocales(); err != nil {
+		t.Fatal(err)
+	}
+	for _, expire := range []bool{false, true} {
+		name := "same flow"
+		if expire {
+			name = "after flow expiry"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			user, err := services.GetOrCreateUser(ctx, db, 4201, nil, "U", nil, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			evA, _ := services.CreateMinimalEvent(ctx, db, user, services.NewEventInput{FirstName: "A", Month: 3, Day: 15}, 1000)
+			evB, _ := services.CreateMinimalEvent(ctx, db, user, services.NewEventInput{FirstName: "B", Month: 5, Day: 6}, 1001)
+			fsmStore := fsm.NewStore(time.Hour, 200)
+			client := &fakeEditClient{}
+			bot := testEditBot(client)
+
+			open := func(ev *models.Event, msgID int64) {
+				fsmStore.SetState(user.ID, fsm.EditEventChoosingField)
+				fsmStore.UpdateData(user.ID, map[string]any{"event_id": ev.ID})
+				g := editYearCtx(t, db, user.ID, fsmStore, "ev:field:"+keyboards.FieldPickValue("year", ev.ID), "", user)
+				g.CallbackQuery.Message = gotgbot.Message{MessageId: msgID, Chat: gotgbot.Chat{Id: 555}}
+				if err := cbFieldPick(bot, g); err != nil {
+					t.Fatal(err)
+				}
+			}
+			open(evA, 101)
+			if expire {
+				fsmStore.Clear(user.ID)
+			}
+			open(evB, 202)
+
+			if err := msgFieldValue(bot, replyCtx(t, db, user.ID, fsmStore, "1990", 101, user)); err != nil {
+				t.Fatal(err)
+			}
+			for _, ev := range []*models.Event{evA, evB} {
+				got, err := services.GetOwnedEvent(ctx, db, user, ev.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got.Year != nil {
+					t.Fatalf("event %d got year %d from a reply to another prompt", ev.ID, *got.Year)
+				}
+			}
+			if !client.sentContains(i18n.T("edit.stale_prompt", user.Language, nil)) {
+				t.Fatal("user did not get the refusal")
+			}
+			// A reply to the current prompt still works.
+			if err := msgFieldValue(bot, replyCtx(t, db, user.ID, fsmStore, "1990", 202, user)); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := services.GetOwnedEvent(ctx, db, user, evB.ID)
+			if got.Year == nil || *got.Year != 1990 {
+				t.Fatalf("reply to the current prompt not applied: %v", got.Year)
+			}
+		})
+	}
+}

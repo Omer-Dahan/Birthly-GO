@@ -211,7 +211,7 @@ func cbFieldPick(b *gotgbot.Bot, ctx *ext.Context) error {
 		return err
 	}
 
-	store.UpdateData(user.ID, map[string]any{"editing_field": field, "prompt_event_id": eventID})
+	store.UpdateData(user.ID, map[string]any{"editing_field": field, "prompt_event_id": eventID, "prompt_message_id": ctx.CallbackQuery.Message.GetMessageId()})
 	if field == "year" {
 		// The year the user is looking at; the write only lands if it is
 		// still the stored year.
@@ -539,10 +539,19 @@ func anchorHebrewYear(event *models.Event, raw string, year int, user *models.Us
 }
 
 // promptMatchesEvent reports whether the open field prompt was asked for the
-// event now being edited.
-func promptMatchesEvent(data map[string]any, eventID int64) bool {
+// event now being edited and, when the reply is a Telegram reply, whether it
+// answers the very message the prompt was shown in. A reply to any other
+// message (an older prompt for the same field of another event) is refused.
+func promptMatchesEvent(data map[string]any, eventID int64, msg *gotgbot.Message) bool {
 	id, ok := data["prompt_event_id"].(int64)
-	return ok && id == eventID
+	if !ok || id != eventID {
+		return false
+	}
+	if msg != nil && msg.ReplyToMessage != nil {
+		promptMsg, _ := data["prompt_message_id"].(int64)
+		return promptMsg != 0 && msg.ReplyToMessage.MessageId == promptMsg
+	}
+	return true
 }
 
 func refuseStalePrompt(b *gotgbot.Bot, ctx *ext.Context, user *models.User) error {
@@ -564,7 +573,7 @@ func msgFieldValue(b *gotgbot.Bot, ctx *ext.Context) error {
 	if field == "" || !hasEventID || field == "photo" {
 		return ext.ContinueGroups
 	}
-	if !promptMatchesEvent(data, eventID) {
+	if !promptMatchesEvent(data, eventID, ctx.EffectiveMessage) {
 		return refuseStalePrompt(b, ctx, user)
 	}
 
@@ -680,7 +689,7 @@ func msgFieldPhoto(b *gotgbot.Bot, ctx *ext.Context) error {
 	if field != "photo" || !hasEventID {
 		return ext.ContinueGroups
 	}
-	if !promptMatchesEvent(data, eventID) {
+	if !promptMatchesEvent(data, eventID, ctx.EffectiveMessage) {
 		return refuseStalePrompt(b, ctx, user)
 	}
 
