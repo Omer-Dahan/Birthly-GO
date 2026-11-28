@@ -43,6 +43,29 @@ func OpenExisting(dbPath string) (*sql.DB, error) {
 	return db, nil
 }
 
+// OpenReadOnly opens an existing database for reading only: the file is opened
+// mode=ro and query_only is on, so any write fails. It does not create the
+// file, change the journal mode, or run migrations.
+func OpenReadOnly(dbPath string) (*sql.DB, error) {
+	u := url.URL{Scheme: "file", Opaque: (&url.URL{Path: dbPath}).EscapedPath(), RawQuery: "mode=ro"}
+	db, err := sql.Open("sqlite", u.String())
+	if err != nil {
+		return nil, fmt.Errorf("opening database: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	for _, p := range []string{"PRAGMA query_only=ON", "PRAGMA busy_timeout=5000"} {
+		if _, err := db.Exec(p); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("applying %q: %w", p, err)
+		}
+	}
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("opening database: %w", err)
+	}
+	return db, nil
+}
+
 func Open(dbPath string) (*sql.DB, error) {
 	if dir := filepath.Dir(dbPath); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
